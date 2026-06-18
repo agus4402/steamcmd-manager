@@ -1,0 +1,90 @@
+# SteamCMD Server Manager — full stack (privilege-separated, Pterodactyl-style).
+#
+# Only the `agent` service mounts the host Docker socket. The internet-facing
+# `backend` has NO Docker access; it drives the agent over an internal-only
+# network with a shared token. See README.md ("Security model").
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-steam}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-steam}
+      POSTGRES_DB: ${POSTGRES_DB:-steammanager}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-steam}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - panel
+
+  # The ONLY component with Docker socket access. Tiny, auditable, token-gated,
+  # and not published to the host — reachable only on the internal network.
+  agent:
+    build: ./agent
+    environment:
+      AGENT_TOKEN: ${AGENT_TOKEN:-dev-agent-token-change-me}
+      GAMESERVER_IMAGE: ${GAMESERVER_IMAGE:-steamcmd-manager/gameserver:latest}
+      PORT_POOL_START: ${PORT_POOL_START:-27015}
+      PORT_POOL_END: ${PORT_POOL_END:-27200}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - orchestration
+    restart: unless-stopped
+
+  backend:
+    build: ./backend
+    depends_on:
+      db:
+        condition: service_healthy
+      agent:
+        condition: service_started
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-steam}:${POSTGRES_PASSWORD:-steam}@db:5432/${POSTGRES_DB:-steammanager}
+      ADMIN_USER: ${ADMIN_USER:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-changeme}
+      JWT_SECRET: ${JWT_SECRET:-dev-jwt-secret-change-me}
+      PANEL_SECRET: ${PANEL_SECRET:-dev-panel-secret-change-me-32bytes!!}
+      PORT_POOL_START: ${PORT_POOL_START:-27015}
+      PORT_POOL_END: ${PORT_POOL_END:-27200}
+      AGENT_URL: http://agent:8001
+      AGENT_TOKEN: ${AGENT_TOKEN:-dev-agent-token-change-me}
+      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:3000}
+    ports:
+      - "8080:8000"
+    volumes:
+      # Dev convenience: live source + autoreload. Remove for immutable prod.
+      # NOTE: the backend intentionally does NOT mount the Docker socket.
+      - ./backend:/app
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    networks:
+      - panel
+      - orchestration
+
+  frontend:
+    build: ./frontend
+    depends_on:
+      - backend
+    environment:
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8080}
+    ports:
+      - "3000:3000"
+    networks:
+      - panel
+
+volumes:
+  pgdata:
+
+networks:
+  panel:
+    driver: bridge
+  # Backend <-> agent only. internal:true => no egress, not reachable from host.
+  orchestration:
+    driver: bridge
+    internal: true

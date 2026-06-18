@@ -1,0 +1,18 @@
+id: debug
+name: "Debug Test Server (no real game)"
+# App ID 1007 = Steamworks SDK Redist: a tiny anonymous download used purely to
+# exercise the install -> start -> logs -> stop pipeline without a multi-GB game.
+app_id: 1007
+anonymous_login: true
+install_dir: /data
+ports:
+  - name: game
+    protocol: both
+    default: 27015
+startup: >
+  bash -c 'echo "debug server listening on port {{PORT_game}} (rcon={{RCON_PASSWORD}})";
+  i=0; while true; do echo "heartbeat $i"; i=$((i+1)); sleep 2; done'
+variables:
+  - key: RCON_PASSWORD
+    default: ""
+update_on_start: false   # files are already present from install; no re-validate needed

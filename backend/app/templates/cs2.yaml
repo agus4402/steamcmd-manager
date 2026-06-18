@@ -1,0 +1,18 @@
+id: cs2
+name: "Counter-Strike 2"
+app_id: 730
+anonymous_login: true
+install_dir: /data
+ports:
+  - name: game
+    protocol: both        # CS2 uses UDP for game traffic, TCP for some services
+    default: 27015
+startup: >
+  ./game/bin/linuxsteamrt64/cs2 -dedicated +map de_dust2
+  -port {{PORT_game}} +rcon_password {{RCON_PASSWORD}} +maxplayers {{MAXPLAYERS}}
+variables:
+  - key: MAXPLAYERS
+    default: "16"
+  - key: RCON_PASSWORD
+    default: ""           # empty => the panel generates a strong password
+update_on_start: true

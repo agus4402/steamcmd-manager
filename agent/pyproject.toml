@@ -1,0 +1,19 @@
+[project]
+name = "steamcmd-manager-agent"
+version = "0.1.0"
+description = "Privileged Docker orchestration agent (the only component with socket access)"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "docker>=7.1",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

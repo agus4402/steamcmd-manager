@@ -1,0 +1,22 @@
+id: valheim
+name: "Valheim Dedicated Server"
+app_id: 896660
+# Set anonymous_login: false for App IDs that require an owning Steam account
+# (the panel will then ask for credentials + a Steam Guard code at install time).
+anonymous_login: true
+install_dir: /data
+ports:
+  # NOTE: Valheim also uses game_port+1 / +2 (UDP). Games requiring strictly
+  # consecutive ports are a known v1 limitation of the port pool.
+  - name: game
+    protocol: udp
+    default: 2456
+startup: >
+  ./valheim_server.x86_64 -nographics -batchmode -name "{{SERVER_NAME}}"
+  -port {{PORT_game}} -world "Dedicated" -password "{{SERVER_PASSWORD}}" -public 0
+variables:
+  - key: SERVER_NAME
+    default: "My Valheim Server"
+  - key: SERVER_PASSWORD
+    default: ""          # empty => the panel generates one (min 5 chars for Valheim)
+update_on_start: true

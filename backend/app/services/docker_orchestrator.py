@@ -1,0 +1,172 @@
+"""HTTP client to the privileged agent — the backend never touches Docker.
+
+This module keeps the exact same public interface the rest of the backend used
+when it talked to docker-py directly (`DockerOrchestrator`, `orchestrator`,
+`ContainerState`, `DockerError`, and the same method names/signatures), so
+`server_service.py` and `console_ws.py` are unchanged. The actual Docker work
+now happens in the agent, reachable only on the internal network with a token.
+"""
+
+from __future__ import annotations
+
+import logging
+from collections.abc import Iterator
+from dataclasses import dataclass
+
+import httpx
+
+from app.config import get_settings
+
+logger = logging.getLogger("steamcmd-manager.agent-client")
+settings = get_settings()
+
+CONTAINER_PREFIX = "gs-"
+INSTALL_PREFIX = "gs-install-"
+DEFAULT_STOP_TIMEOUT = 30
+
+# wait_install can block for a long time (big steamcmd downloads).
+_DEFAULT_TIMEOUT = httpx.Timeout(30.0, read=30.0)
+_INSTALL_WAIT_TIMEOUT = httpx.Timeout(30.0, read=None)
+
+
+@dataclass(slots=True)
+class ContainerState:
+    exists: bool
+    status: str
+    exit_code: int | None = None
+
+
+class DockerError(RuntimeError):
+    """Raised for orchestration failures the API layer can surface cleanly."""
+
+
+class DockerOrchestrator:
+    """Thin HTTP client to the agent, preserving the old orchestrator API."""
+
+    def __init__(self) -> None:
+        self._base = settings.agent_url.rstrip("/")
+        self._headers = {"Authorization": f"Bearer {settings.agent_token}"}
+
+    # -- request helpers ------------------------------------------------------
+
+    def _request(self, method: str, path: str, *, timeout=_DEFAULT_TIMEOUT, **kwargs) -> httpx.Response:
+        try:
+            resp = httpx.request(
+                method, f"{self._base}{path}", headers=self._headers, timeout=timeout, **kwargs
+            )
+        except httpx.HTTPError as exc:
+            raise DockerError(f"agent unreachable: {exc}") from exc
+        if resp.status_code >= 400:
+            detail = resp.text
+            try:
+                detail = resp.json().get("detail", detail)
+            except Exception:  # noqa: BLE001
+                pass
+            raise DockerError(f"agent error {resp.status_code}: {detail}")
+        return resp
+
+    # -- naming (pure, no network) -------------------------------------------
+
+    @staticmethod
+    def container_name(server_id: str) -> str:
+        return f"{CONTAINER_PREFIX}{server_id}"
+
+    @staticmethod
+    def install_name(server_id: str) -> str:
+        return f"{INSTALL_PREFIX}{server_id}"
+
+    @staticmethod
+    def data_volume(server_id: str) -> str:
+        return f"gsdata-{server_id}"
+
+    # -- daemon ---------------------------------------------------------------
+
+    def ping(self) -> dict[str, object]:
+        return self._request("GET", "/ping").json()
+
+    # -- volumes --------------------------------------------------------------
+
+    def ensure_volume(self, name: str) -> None:
+        self._request("POST", f"/volumes/{name}/ensure")
+
+    # -- container lifecycle --------------------------------------------------
+
+    def create_server_container(
+        self, server_id: str, env: dict[str, str], port_bindings: dict[str, int]
+    ) -> str:
+        resp = self._request(
+            "POST",
+            f"/servers/{server_id}/container",
+            json={"env": env, "port_bindings": port_bindings},
+        )
+        return resp.json()["container_id"]
+
+    def start(self, server_id: str) -> None:
+        self._request("POST", f"/servers/{server_id}/start")
+
+    def stop(self, server_id: str, timeout: int = DEFAULT_STOP_TIMEOUT) -> None:
+        self._request("POST", f"/servers/{server_id}/stop")
+
+    def restart(self, server_id: str, timeout: int = DEFAULT_STOP_TIMEOUT) -> None:
+        self._request("POST", f"/servers/{server_id}/restart")
+
+    def remove(self, server_id: str, remove_data: bool = True) -> None:
+        self._request("DELETE", f"/servers/{server_id}", params={"remove_data": remove_data})
+
+    def state(self, server_id: str) -> ContainerState:
+        data = self._request("GET", f"/servers/{server_id}/state").json()
+        return ContainerState(
+            exists=data["exists"], status=data["status"], exit_code=data.get("exit_code")
+        )
+
+    # -- install / update -----------------------------------------------------
+
+    def run_install(self, server_id: str, env: dict[str, str]) -> None:
+        self._request("POST", f"/servers/{server_id}/install", json={"env": env})
+
+    def wait_install(self, server_id: str) -> tuple[int, str]:
+        data = self._request(
+            "GET", f"/servers/{server_id}/install/wait", timeout=_INSTALL_WAIT_TIMEOUT
+        ).json()
+        return data["code"], data["logs"]
+
+    # -- logs / stdin ---------------------------------------------------------
+
+    def recent_logs(self, server_id: str, tail: int = 200) -> str:
+        return self._request("GET", f"/servers/{server_id}/logs", params={"tail": tail}).json()[
+            "logs"
+        ]
+
+    def recent_install_logs(self, server_id: str, tail: int = 50) -> str:
+        return self._request(
+            "GET", f"/servers/{server_id}/install/logs", params={"tail": tail}
+        ).json()["logs"]
+
+    def follow_logs(self, server_id: str, tail: int = 200) -> Iterator[bytes]:
+        """Stream the agent's follow-logs endpoint as a byte iterator.
+
+        Opens an httpx stream and yields chunks; the stream is closed when the
+        consumer (console_ws pump thread) stops iterating.
+        """
+        url = f"{self._base}/servers/{server_id}/logs/follow"
+        params = {"tail": tail}
+        try:
+            with httpx.stream(
+                "GET",
+                url,
+                headers=self._headers,
+                params=params,
+                timeout=httpx.Timeout(30.0, read=None),
+            ) as resp:
+                if resp.status_code >= 400:
+                    return
+                yield from resp.iter_bytes()
+        except httpx.HTTPError as exc:
+            logger.info("follow_logs stream ended for %s: %s", server_id, exc)
+            return
+
+    def send_stdin(self, server_id: str, data: str) -> None:
+        self._request("POST", f"/servers/{server_id}/stdin", json={"data": data})
+
+
+orchestrator = DockerOrchestrator()
