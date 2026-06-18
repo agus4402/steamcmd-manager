@@ -1,20 +1,31 @@
+import {
+  CircleDot,
+  CircleCheck,
+  CirclePause,
+  CircleAlert,
+  Download,
+  RefreshCw,
+  type LucideIcon,
+} from "lucide-react";
 import type { ServerStatus } from "@/lib/types";
+import { Badge, type BadgeProps } from "@/components/ui/badge";
 
-const STYLES: Record<ServerStatus, string> = {
-  running: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30",
-  stopped: "bg-neutral-500/15 text-neutral-300 border-neutral-500/30",
-  installing: "bg-amber-500/15 text-amber-400 border-amber-500/30 animate-pulse",
-  updating: "bg-amber-500/15 text-amber-400 border-amber-500/30 animate-pulse",
-  errored: "bg-red-500/15 text-red-400 border-red-500/30",
-  created: "bg-sky-500/15 text-sky-400 border-sky-500/30",
+// Status conveyed by icon AND color (never color alone) for accessibility.
+const MAP: Record<ServerStatus, { variant: BadgeProps["variant"]; icon: LucideIcon; label: string; spin?: boolean }> = {
+  running: { variant: "success", icon: CircleCheck, label: "Running" },
+  stopped: { variant: "default", icon: CirclePause, label: "Stopped" },
+  installing: { variant: "warning", icon: Download, label: "Installing", spin: true },
+  updating: { variant: "warning", icon: RefreshCw, label: "Updating", spin: true },
+  errored: { variant: "danger", icon: CircleAlert, label: "Errored" },
+  created: { variant: "info", icon: CircleDot, label: "Created" },
 };
 
 export default function StatusBadge({ status }: { status: ServerStatus }) {
+  const { variant, icon: Icon, label, spin } = MAP[status] ?? MAP.created;
   return (
-    <span
-      className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium ${STYLES[status] ?? STYLES.created}`}
-    >
-      {status}
-    </span>
+    <Badge variant={variant}>
+      <Icon className={`size-3 ${spin ? "animate-spin" : ""}`} />
+      {label}
+    </Badge>
   );
 }

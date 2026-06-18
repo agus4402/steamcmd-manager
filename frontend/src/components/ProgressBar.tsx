@@ -22,16 +22,16 @@ export default function ProgressBar({
   return (
     <div className="w-full">
       <div className="mb-1 flex justify-between text-xs">
-        <span className="text-amber-400">{label}…</span>
-        <span className="text-neutral-400">
+        <span className="font-medium text-warning">{label}…</span>
+        <span className="font-mono text-muted-foreground">
           {hasBytes
             ? `${fmtGB(progress!.downloaded)} / ${fmtGB(progress!.total)} GB · ${pct.toFixed(1)}%`
             : "preparing…"}
         </span>
       </div>
-      <div className="h-2 w-full overflow-hidden rounded bg-neutral-800">
+      <div className="h-2 w-full overflow-hidden rounded-full bg-secondary">
         <div
-          className={`h-full bg-amber-500 transition-all duration-500 ${hasBytes ? "" : "animate-pulse w-1/3"}`}
+          className={`h-full rounded-full bg-warning transition-all duration-500 ${hasBytes ? "" : "w-1/3 animate-pulse"}`}
           style={hasBytes ? { width: `${pct}%` } : undefined}
         />
       </div>

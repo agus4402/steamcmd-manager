@@ -1,206 +1,100 @@
 "use client";
 
-import { use, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { api, ApiError } from "@/lib/api";
-import { promptSteamCreds } from "@/lib/creds";
-import type { Progress, Server } from "@/lib/types";
-import StatusBadge from "@/components/StatusBadge";
-import Console from "@/components/Console";
-import ProgressBar from "@/components/ProgressBar";
+import { toast } from "sonner";
+import { Copy, Cpu } from "lucide-react";
+import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
+import { ComingSoon } from "@/components/common/states";
+import { useServerCtx } from "./server-context";
 
-type Tab = "console" | "config" | "ports";
+export default function ServerOverview() {
+  const { server } = useServerCtx();
 
-const BUSY = new Set(["installing", "updating"]);
-
-export default function ServerDetail({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = use(params);
-  const router = useRouter();
-  const [server, setServer] = useState<Server | null>(null);
-  const [tab, setTab] = useState<Tab>("console");
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [vars, setVars] = useState<Record<string, string>>({});
-  // Live progress from the console WS — keeps the bar in sync with the console
-  // (vs. the slower 3s poll). Falls back to the polled value when unavailable.
-  const [liveProgress, setLiveProgress] = useState<Progress | null>(null);
-
-  const refresh = useCallback(async () => {
-    try {
-      const s = await api.server(id);
-      setServer(s);
-      setVars((prev) => (Object.keys(prev).length ? prev : s.variables));
-      setError(null);
-    } catch (e) {
-      setError(e instanceof ApiError ? e.message : "unreachable");
-    }
-  }, [id]);
-
-  useEffect(() => {
-    refresh();
-    const t = setInterval(refresh, 3000);
-    return () => clearInterval(t);
-  }, [refresh]);
-
-  // Drop stale live progress once the install/update finishes.
-  useEffect(() => {
-    if (server && !BUSY.has(server.status)) setLiveProgress(null);
-  }, [server]);
-
-  async function act(action: string) {
-    const creds = server ? promptSteamCreds(server, action) : undefined;
-    setBusy(true);
-    setError(null);
-    try {
-      await api.action(id, action, creds);
-      await refresh();
-    } catch (e) {
-      setError(e instanceof ApiError ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
+  function copyPort(port: number) {
+    navigator.clipboard?.writeText(String(port));
+    toast.success(`Copied port ${port}`);
   }
-
-  async function saveVars() {
-    setBusy(true);
-    try {
-      await api.patch(id, { variables: vars });
-      await refresh();
-    } catch (e) {
-      setError(e instanceof ApiError ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function remove() {
-    if (!confirm(`Delete "${server?.name}"? Removes container, data volume and frees ports.`)) return;
-    await api.remove(id);
-    router.push("/");
-  }
-
-  if (!server) {
-    return (
-      <main className="mx-auto max-w-4xl px-6 py-10 text-neutral-500">
-        {error ?? "Loading…"}
-      </main>
-    );
-  }
-
-  const installing = BUSY.has(server.status);
 
   return (
-    <main className="mx-auto max-w-4xl px-6 py-10">
-      <Link href="/" className="text-sm text-neutral-500 hover:underline">
-        ← Dashboard
-      </Link>
+    <div className="grid gap-6 lg:grid-cols-3">
+      <div className="flex flex-col gap-6 lg:col-span-2">
+        {server.status === "errored" && server.error_message && (
+          <pre className="max-h-40 overflow-auto rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-xs text-danger">
+            {server.error_message}
+          </pre>
+        )}
 
-      <header className="mb-6 mt-2 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <h1 className="text-2xl font-semibold">{server.name}</h1>
-          <StatusBadge status={server.status} />
-        </div>
-        <div className="text-sm text-neutral-500">
-          {server.template_id} · app {server.app_id}
-        </div>
-      </header>
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm">Details</CardTitle>
+          </CardHeader>
+          <CardContent className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm sm:grid-cols-3">
+            <Detail label="Template" value={server.template_id} />
+            <Detail label="Steam App ID" value={String(server.app_id)} />
+            <Detail label="Login" value={server.anonymous_login ? "Anonymous" : "Account required"} />
+            <Detail label="Update on start" value={server.update_on_start ? "Yes" : "No"} />
+            <Detail label="Created" value={new Date(server.created_at).toLocaleString()} />
+            <Detail label="ID" value={server.id} mono />
+          </CardContent>
+        </Card>
 
-      {error && (
-        <div className="mb-4 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">
-          {error}
-        </div>
-      )}
-      {server.status === "errored" && server.error_message && (
-        <pre className="mb-4 max-h-32 overflow-auto rounded-lg border border-red-500/30 bg-red-500/5 px-4 py-3 text-xs text-red-300">
-          {server.error_message}
-        </pre>
-      )}
-
-      {installing ? (
-        <div className="mb-6 flex items-center gap-4">
-          <div className="flex-1">
-            <ProgressBar
-              progress={liveProgress ?? server.progress}
-              label={server.status === "updating" ? "Updating" : "Installing"}
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center gap-2 text-sm">
+              <Cpu className="size-4 text-muted-foreground" /> Live metrics
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ComingSoon
+              title="Resource metrics"
+              description="CPU, memory, disk and network for this server."
+              backend="Expose docker stats via the agent + /api/servers/{id}/stats."
             />
-          </div>
-          <button onClick={remove} disabled={busy} className="rounded px-3 py-1.5 text-sm text-red-400 hover:bg-red-500/10 disabled:opacity-40">Delete</button>
-        </div>
-      ) : (
-        <div className="mb-6 flex flex-wrap gap-2 text-sm">
-          <button onClick={() => act("install")} disabled={busy} className="rounded bg-sky-800 px-3 py-1.5 hover:bg-sky-700 disabled:opacity-40">Install</button>
-          {server.status === "running" ? (
-            <button onClick={() => act("stop")} disabled={busy} className="rounded bg-neutral-700 px-3 py-1.5 hover:bg-neutral-600 disabled:opacity-40">Stop</button>
-          ) : (
-            <button onClick={() => act("start")} disabled={busy} className="rounded bg-emerald-700 px-3 py-1.5 hover:bg-emerald-600 disabled:opacity-40">Start</button>
-          )}
-          <button onClick={() => act("restart")} disabled={busy} className="rounded bg-neutral-700 px-3 py-1.5 hover:bg-neutral-600 disabled:opacity-40">Restart</button>
-          <button onClick={() => act("update")} disabled={busy} className="rounded bg-amber-800 px-3 py-1.5 hover:bg-amber-700 disabled:opacity-40">Update</button>
-          <button onClick={remove} disabled={busy} className="ml-auto rounded px-3 py-1.5 text-red-400 hover:bg-red-500/10 disabled:opacity-40">Delete</button>
-        </div>
-      )}
-
-      <div className="mb-4 flex gap-1 border-b border-neutral-800 text-sm">
-        {(["console", "config", "ports"] as Tab[]).map((t) => (
-          <button
-            key={t}
-            onClick={() => setTab(t)}
-            className={`px-4 py-2 capitalize ${tab === t ? "border-b-2 border-emerald-500 text-white" : "text-neutral-500 hover:text-neutral-300"}`}
-          >
-            {t}
-          </button>
-        ))}
+          </CardContent>
+        </Card>
       </div>
 
-      {tab === "console" && <Console serverId={id} onProgress={setLiveProgress} />}
-
-      {tab === "config" && (
-        <div className="grid gap-4">
-          {Object.keys(vars).length === 0 && (
-            <p className="text-sm text-neutral-500">This template has no variables.</p>
-          )}
-          {Object.entries(vars).map(([k, v]) => (
-            <div key={k}>
-              <label className="mb-1 block text-sm text-neutral-400">{k}</label>
-              <input
-                value={v}
-                onChange={(e) => setVars({ ...vars, [k]: e.target.value })}
-                className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm outline-none focus:border-emerald-600"
-              />
-            </div>
-          ))}
-          {Object.keys(vars).length > 0 && (
-            <div>
-              <button onClick={saveVars} disabled={busy} className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500 disabled:opacity-40">
-                Save
-              </button>
-              <p className="mt-2 text-xs text-neutral-600">Changes apply on next start.</p>
-            </div>
-          )}
-        </div>
-      )}
-
-      {tab === "ports" && (
-        <div className="grid gap-2">
-          <p className="text-sm text-neutral-400">Connect clients to these host ports:</p>
+      {/* Ports */}
+      <Card className="h-fit">
+        <CardHeader className="pb-3">
+          <CardTitle className="text-sm">Connection ports</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-2">
+          {server.ports.length === 0 && <p className="text-sm text-muted-foreground">No ports allocated.</p>}
           {server.ports.map((p) => (
-            <div
+            <button
               key={`${p.protocol}-${p.host_port}`}
-              className="flex items-center justify-between rounded-lg border border-neutral-800 bg-neutral-900/60 px-4 py-2"
+              onClick={() => copyPort(p.host_port)}
+              className="flex cursor-pointer items-center justify-between rounded-md border border-border px-3 py-2 text-sm transition-colors hover:bg-accent"
+              title="Copy port"
             >
-              <span className="text-sm text-neutral-400">{p.name}</span>
-              <button
-                onClick={() => navigator.clipboard?.writeText(String(p.host_port))}
-                className="font-mono text-sm hover:text-emerald-400"
-                title="copy"
-              >
+              <span className="text-muted-foreground">
+                {p.name}
+                {!p.is_primary && <span className="text-muted-foreground/60"> (extra)</span>}
+              </span>
+              <span className="flex items-center gap-2 font-mono">
                 {p.host_port}/{p.protocol}
-              </button>
-            </div>
+                <Copy className="size-3.5 text-muted-foreground" />
+              </span>
+            </button>
           ))}
-        </div>
-      )}
-    </main>
+          <Link
+            href={`/servers/${server.id}/console`}
+            className="mt-1 text-center text-sm text-muted-foreground transition-colors hover:text-foreground"
+          >
+            Open console →
+          </Link>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+function Detail({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+  return (
+    <div>
+      <dt className="text-xs uppercase tracking-wider text-muted-foreground">{label}</dt>
+      <dd className={`mt-0.5 ${mono ? "font-mono text-xs" : ""}`}>{value}</dd>
+    </div>
   );
 }

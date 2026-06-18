@@ -2,10 +2,78 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * Design tokens (shadcn-style HSL CSS variables).
+ * Dark-mode-native, slate-based palette with an emerald primary/CTA —
+ * matches the "Dark Mode (OLED)" direction for technical admin panels.
+ */
 :root {
   color-scheme: dark;
+
+  --background: 222 47% 5%;
+  --foreground: 210 40% 98%;
+
+  --card: 222 44% 8%;
+  --card-foreground: 210 40% 98%;
+
+  --popover: 222 47% 7%;
+  --popover-foreground: 210 40% 98%;
+
+  --primary: 142 71% 45%;
+  --primary-foreground: 222 47% 6%;
+
+  --secondary: 217 33% 16%;
+  --secondary-foreground: 210 40% 98%;
+
+  --muted: 217 33% 15%;
+  --muted-foreground: 215 18% 62%;
+
+  --accent: 217 33% 18%;
+  --accent-foreground: 210 40% 98%;
+
+  --destructive: 0 72% 51%;
+  --destructive-foreground: 210 40% 98%;
+
+  --border: 217 30% 17%;
+  --input: 217 30% 17%;
+  --ring: 142 71% 45%;
+
+  --sidebar: 222 47% 6%;
+
+  --radius: 0.65rem;
+}
+
+* {
+  border-color: hsl(var(--border));
 }
 
 body {
-  @apply bg-neutral-950 text-neutral-100 antialiased;
+  background-color: hsl(var(--background));
+  color: hsl(var(--foreground));
+  font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Thin, theme-aware scrollbars for the dense panel surfaces. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: hsl(var(--border)) transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background-color: hsl(var(--border));
+  border-radius: 9999px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

@@ -10,6 +10,7 @@ export interface Port {
   name: string;
   protocol: string;
   host_port: number;
+  is_primary: boolean;
 }
 
 export interface Progress {

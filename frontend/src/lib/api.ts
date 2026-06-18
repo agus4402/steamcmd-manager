@@ -23,16 +23,32 @@ class ApiError extends Error {
   }
 }
 
+// Abort slow requests so a hung backend never freezes the UI indefinitely.
+const REQUEST_TIMEOUT_MS = 15000;
+
 async function request<T>(path: string, opts: RequestInit = {}): Promise<T> {
   const token = getToken();
-  const res = await fetch(`${API_BASE}${path}`, {
-    ...opts,
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(opts.headers ?? {}),
-    },
-  });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}${path}`, {
+      ...opts,
+      signal: controller.signal,
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(opts.headers ?? {}),
+      },
+    });
+  } catch (e) {
+    if (e instanceof DOMException && e.name === "AbortError") {
+      throw new ApiError("request timed out", 408);
+    }
+    throw new ApiError("network error", 0);
+  } finally {
+    clearTimeout(timer);
+  }
   if (!res.ok) {
     // Session expired / missing token: bounce to login (except on the login call).
     if (res.status === 401 && typeof window !== "undefined" && path !== "/api/auth/login") {
@@ -58,6 +74,7 @@ export const api = {
       body: JSON.stringify({ username, password }),
     }),
   me: () => request<{ username: string }>("/api/auth/me"),
+  health: () => request<{ status?: string; db?: boolean; agent?: boolean }>("/api/health/full"),
   templates: () => request<Template[]>("/api/templates"),
   servers: () => request<Server[]>("/api/servers"),
   server: (id: string) => request<Server>(`/api/servers/${id}`),
