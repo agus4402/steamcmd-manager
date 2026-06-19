@@ -1,12 +1,13 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { SlidersHorizontal, Network, ShieldCheck, Plug, LogOut } from "lucide-react";
+import { SlidersHorizontal, Network, ShieldCheck, Plug, LogOut, ArrowRight } from "lucide-react";
 import { setToken } from "@/lib/api";
 import PageHeader from "@/components/common/PageHeader";
 import { ComingSoon } from "@/components/common/states";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 
 export default function SettingsPage() {
   const router = useRouter();
@@ -30,12 +31,6 @@ export default function SettingsPage() {
       description: "Credential storage, session policy and access controls.",
       backend: "Add a settings/security model; multi-user/roles require an auth overhaul.",
     },
-    {
-      icon: Plug,
-      title: "Integrations",
-      description: "Discord, Telegram and email channels for notifications.",
-      backend: "Shared with the notifications channel configuration.",
-    },
   ];
 
   return (
@@ -58,6 +53,25 @@ export default function SettingsPage() {
       />
 
       <div className="grid gap-6 lg:grid-cols-2">
+        <Card className="transition-colors hover:border-primary/40">
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center gap-2 text-sm">
+              <Plug className="size-4 text-muted-foreground" /> Integrations
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="flex items-center justify-between gap-4">
+            <p className="text-sm text-muted-foreground">
+              Connect external services like Playit.gg tunnels, and more.
+            </p>
+            <Link
+              href="/settings/integrations"
+              className={buttonVariants({ variant: "outline", size: "sm" })}
+            >
+              Manage <ArrowRight className="size-4" />
+            </Link>
+          </CardContent>
+        </Card>
+
         {sections.map((s) => (
           <Card key={s.title}>
             <CardHeader className="pb-3">

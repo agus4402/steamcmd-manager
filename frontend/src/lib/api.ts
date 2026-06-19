@@ -1,4 +1,15 @@
-import type { BackupJob, Server, Snapshot, Stats, SteamCredentials, Template } from "./types";
+import type {
+  BackupJob,
+  ConnectStart,
+  ConnectStatus,
+  Integration,
+  IntegrationTunnel,
+  Server,
+  Snapshot,
+  Stats,
+  SteamCredentials,
+  Template,
+} from "./types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
 
@@ -114,6 +125,28 @@ export const api = {
     ),
   deleteBackup: (id: string, snapshotId: string) =>
     request<null>(`/api/servers/${id}/backups/${snapshotId}`, { method: "DELETE" }),
+
+  integrations: {
+    list: () => request<Integration[]>("/api/integrations"),
+    get: (id: string) => request<Integration>(`/api/integrations/${id}`),
+    connect: (provider: string) =>
+      request<ConnectStart>(`/api/integrations/${provider}/connect`, { method: "POST" }),
+    connectStatus: (id: string) =>
+      request<ConnectStatus>(`/api/integrations/${id}/connect/status`),
+    sync: (id: string) => request<Integration>(`/api/integrations/${id}/sync`, { method: "POST" }),
+    disconnect: (id: string) => request<null>(`/api/integrations/${id}`, { method: "DELETE" }),
+    tunnels: (id: string) => request<IntegrationTunnel[]>(`/api/integrations/${id}/tunnels`),
+    createTunnel: (
+      id: string,
+      body: { server_id: string | null; local_port: number; protocol: string; name?: string | null },
+    ) =>
+      request<IntegrationTunnel>(`/api/integrations/${id}/tunnels`, {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
+    deleteTunnel: (id: string, tunnelId: string) =>
+      request<null>(`/api/integrations/${id}/tunnels/${tunnelId}`, { method: "DELETE" }),
+  },
 };
 
 export function consoleWsUrl(id: string): string {

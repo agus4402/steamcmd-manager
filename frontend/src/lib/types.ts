@@ -89,3 +89,48 @@ export interface Stats {
   pids: number;
   online_cpus: number;
 }
+
+export type IntegrationStatus = "not_connected" | "pending" | "connected" | "error";
+
+export interface Integration {
+  /** null until a connection row exists for this provider. */
+  id: string | null;
+  provider: string;
+  name: string;
+  description: string;
+  icon: string;
+  capabilities: string[];
+  status: IntegrationStatus;
+  account_label: string | null;
+  last_sync_at: string | null;
+  error_message: string | null;
+  tunnel_count: number;
+}
+
+export interface ConnectStart {
+  integration_id: string;
+  claim_url: string | null;
+  expires_at: string | null;
+}
+
+export interface ConnectStatus {
+  integration_id: string;
+  status: IntegrationStatus;
+  account_label: string | null;
+  error_message: string | null;
+}
+
+export type TunnelStatus = "pending" | "active" | "error" | "disabled";
+
+export interface IntegrationTunnel {
+  id: string;
+  integration_id: string;
+  server_id: string | null;
+  name: string;
+  remote_domain: string | null;
+  local_port: number;
+  protocol: string;
+  status: TunnelStatus;
+  error_message: string | null;
+  created_at: string;
+}

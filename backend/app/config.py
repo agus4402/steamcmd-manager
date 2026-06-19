@@ -46,6 +46,15 @@ class Settings(BaseSettings):
     agent_url: str = "http://agent:8001"
     agent_token: str = "dev-agent-token-change-me"
 
+    # Integrations
+    # Docker image used by the agent to run the Playit.gg program (one shared
+    # container per connected account). Per-integration secrets are stored
+    # Fernet-encrypted using panel_secret — no extra secret needed here.
+    playit_image: str = "ghcr.io/playit-cloud/playit-agent:latest"
+    playit_api_base: str = "https://api.playit.gg"
+    # How often the periodic reconciliation loop runs (seconds); 0 disables it.
+    integration_sync_interval: int = 120
+
     # CORS / frontend origin
     frontend_origin: str = "http://localhost:3000"
 

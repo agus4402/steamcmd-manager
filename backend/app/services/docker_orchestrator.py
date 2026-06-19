@@ -242,5 +242,27 @@ class DockerOrchestrator:
     def send_stdin(self, server_id: str, data: str) -> None:
         self._request("POST", f"/servers/{server_id}/stdin", json={"data": data})
 
+    # -- integrations: playit -------------------------------------------------
+    #
+    # The agent only runs the egress-less side: the playitd forwarder container.
+    # All api.playit.gg calls (claim, tunnels) happen in the backend (see
+    # app/integrations/playit/api.py). The backend passes the secret here so the
+    # agent can (re)start the container from the backend's encrypted copy.
+
+    def playit_run(self, integration_id: str, secret: str) -> None:
+        self._request(
+            "POST",
+            f"/integrations/playit/{integration_id}/run",
+            json={"secret": secret},
+        )
+
+    def playit_state(self, integration_id: str) -> dict:
+        return self._request(
+            "GET", f"/integrations/playit/{integration_id}/state"
+        ).json()
+
+    def playit_remove(self, integration_id: str) -> None:
+        self._request("DELETE", f"/integrations/playit/{integration_id}")
+
 
 orchestrator = DockerOrchestrator()

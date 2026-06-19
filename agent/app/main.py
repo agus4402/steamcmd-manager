@@ -20,12 +20,15 @@ from starlette.responses import StreamingResponse
 
 from app.config import get_settings, verify_secrets
 from app.orchestrator import DockerError, orchestrator
+from app.playit import playit
 from app.schemas import (
     CreateContainerRequest,
     CreateResponse,
     InstallRequest,
     InstallResultResponse,
     LogsResponse,
+    PlayitSecretRequest,
+    PlayitStateResponse,
     SnapshotListResponse,
     SnapshotResponse,
     StateResponse,
@@ -58,6 +61,12 @@ def valid_dst_id(dst_id: str = Path(...)) -> str:
     if not SERVER_ID_RE.match(dst_id):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid destination id")
     return dst_id
+
+
+def valid_integration_id(integration_id: str = Path(...)) -> str:
+    if not SERVER_ID_RE.match(integration_id):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid integration id")
+    return integration_id
 
 
 def _validate_port_bindings(bindings: dict[str, int]) -> None:
@@ -271,5 +280,40 @@ async def copy_data(
 ) -> None:
     try:
         await run_in_threadpool(orchestrator.copy_data, server_id, dst_id)
+    except DockerError as exc:
+        raise _wrap(exc) from exc
+
+
+# -- integrations: playit (data-plane only; control-plane lives in backend) ---
+
+
+@app.post("/integrations/playit/{integration_id}/run", dependencies=authed, status_code=204)
+async def playit_run(
+    payload: PlayitSecretRequest, integration_id: str = Depends(valid_integration_id)
+) -> None:
+    try:
+        await run_in_threadpool(playit.ensure_running, integration_id, payload.secret)
+    except DockerError as exc:
+        raise _wrap(exc) from exc
+
+
+@app.get(
+    "/integrations/playit/{integration_id}/state",
+    dependencies=authed,
+    response_model=PlayitStateResponse,
+)
+async def playit_state(
+    integration_id: str = Depends(valid_integration_id),
+) -> PlayitStateResponse:
+    data = await run_in_threadpool(playit.state, integration_id)
+    return PlayitStateResponse(**data)
+
+
+@app.delete("/integrations/playit/{integration_id}", dependencies=authed, status_code=204)
+async def playit_remove(
+    integration_id: str = Depends(valid_integration_id),
+) -> None:
+    try:
+        await run_in_threadpool(playit.remove, integration_id)
     except DockerError as exc:
         raise _wrap(exc) from exc

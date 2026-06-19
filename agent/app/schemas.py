@@ -60,3 +60,14 @@ class SnapshotResponse(BaseModel):
 
 class SnapshotListResponse(BaseModel):
     snapshots: list[SnapshotResponse]
+
+
+# -- integrations: playit (data-plane only) -----------------------------------
+
+
+class PlayitSecretRequest(BaseModel):
+    secret: str
+
+
+class PlayitStateResponse(BaseModel):
+    running: bool

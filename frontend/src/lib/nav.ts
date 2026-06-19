@@ -5,6 +5,7 @@ import {
   Clock,
   Bell,
   Settings,
+  Plug,
   type LucideIcon,
 } from "lucide-react";
 
@@ -40,7 +41,10 @@ export const NAV_GROUPS: NavGroup[] = [
   },
   {
     label: "System",
-    items: [{ label: "Settings", href: "/settings", icon: Settings }],
+    items: [
+      { label: "Integrations", href: "/settings/integrations", icon: Plug },
+      { label: "Settings", href: "/settings", icon: Settings },
+    ],
   },
 ];
 
@@ -57,6 +61,7 @@ export const SERVER_NAV: ServerNavItem[] = [
   { segment: "console", label: "Console" },
   { segment: "config", label: "Config" },
   { segment: "metrics", label: "Metrics" },
+  { segment: "network", label: "Network" },
   { segment: "workshop", label: "Workshop", soon: true },
   { segment: "schedule", label: "Schedule", soon: true },
   { segment: "backups", label: "Backups" },

@@ -25,6 +25,14 @@ class Settings(BaseSettings):
     docker_host: str = "unix:///var/run/docker.sock"
     gameserver_image: str = "steamcmd-manager/gameserver:latest"
     steamcmd_cache_volume: str = "steamcmd-cache"
+
+    # Integrations — Playit.gg. One shared playit container per connected
+    # account (network_mode=host so it can reach published game ports on
+    # 127.0.0.1). Tunnel allocation goes through the Playit control-plane API.
+    playit_image: str = "ghcr.io/playit-cloud/playit-agent:latest"
+    playit_api_base: str = "https://api.playit.gg"
+    # Seconds to wait for the playit program to emit a claim URL on start.
+    playit_claim_timeout: int = 20
     # Shared volume holding per-server backup tarballs, and the tiny image used
     # for volume operations (tar/copy) — runs with no network and no privileges.
     backups_volume: str = "steamcmd-backups"
