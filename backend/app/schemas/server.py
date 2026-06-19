@@ -73,6 +73,8 @@ class TemplateOut(BaseModel):
     name: str
     app_id: int
     anonymous_login: bool
+    supported: bool = True
+    unsupported_reason: str | None = None
     ports: list[TemplatePortOut]
     variables: list[TemplateVarOut]
     update_on_start: bool

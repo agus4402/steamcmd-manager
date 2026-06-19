@@ -51,6 +51,13 @@ class GameTemplate(BaseModel):
     app_id: int = Field(ge=1)
     anonymous_login: bool = True
     install_dir: str = "/data"
+    # Mark a template as known-not-working so it stays visible in the catalog
+    # (as a reference / warning) but cannot be used to create a server. Use this
+    # for games whose dedicated-server files aren't actually obtainable via
+    # SteamCMD (e.g. Deadside: the depot exists but ships no binaries), or that
+    # have no Linux server. `unsupported_reason` is shown to the user.
+    supported: bool = True
+    unsupported_reason: str | None = None
     ports: list[PortSpec] = Field(default_factory=list)
     startup: str
     variables: list[VarSpec] = Field(default_factory=list)

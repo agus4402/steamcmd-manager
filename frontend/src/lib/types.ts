@@ -50,6 +50,8 @@ export interface Template {
   name: string;
   app_id: number;
   anonymous_login: boolean;
+  supported: boolean;
+  unsupported_reason: string | null;
   ports: TemplatePort[];
   variables: TemplateVar[];
   update_on_start: boolean;

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import useSWR from "swr";
-import { Plus, LayoutTemplate, Users, UserCheck } from "lucide-react";
+import { Plus, LayoutTemplate, Users, UserCheck, Ban } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import type { Template } from "@/lib/types";
 import PageHeader from "@/components/common/PageHeader";
@@ -48,10 +48,16 @@ export default function TemplatesPage() {
                     <h3 className="font-medium">{t.name}</h3>
                     <p className="text-xs text-muted-foreground">app {t.app_id}</p>
                   </div>
-                  <Badge variant={t.anonymous_login ? "info" : "warning"}>
-                    {t.anonymous_login ? <Users className="size-3" /> : <UserCheck className="size-3" />}
-                    {t.anonymous_login ? "Anonymous" : "Login"}
-                  </Badge>
+                  {t.supported ? (
+                    <Badge variant={t.anonymous_login ? "info" : "warning"}>
+                      {t.anonymous_login ? <Users className="size-3" /> : <UserCheck className="size-3" />}
+                      {t.anonymous_login ? "Anonymous" : "Login"}
+                    </Badge>
+                  ) : (
+                    <Badge variant="danger">
+                      <Ban className="size-3" /> Not supported
+                    </Badge>
+                  )}
                 </div>
                 <div className="flex flex-wrap gap-1">
                   {t.ports.map((p) => (
@@ -63,12 +69,23 @@ export default function TemplatesPage() {
                     </span>
                   ))}
                 </div>
-                <Link
-                  href="/new"
-                  className={`${buttonVariants({ variant: "outline", size: "sm" })} mt-auto`}
-                >
-                  Create from template
-                </Link>
+                {!t.supported && t.unsupported_reason && (
+                  <p className="text-xs text-danger">{t.unsupported_reason}</p>
+                )}
+                {t.supported ? (
+                  <Link
+                    href="/new"
+                    className={`${buttonVariants({ variant: "outline", size: "sm" })} mt-auto`}
+                  >
+                    Create from template
+                  </Link>
+                ) : (
+                  <span
+                    className={`${buttonVariants({ variant: "outline", size: "sm" })} pointer-events-none mt-auto opacity-50`}
+                  >
+                    Unavailable
+                  </span>
+                )}
               </CardContent>
             </Card>
           ))}

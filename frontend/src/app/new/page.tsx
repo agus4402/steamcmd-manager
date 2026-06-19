@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { CircleCheck, Users, UserCheck } from "lucide-react";
+import { CircleCheck, Users, UserCheck, Ban } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import type { Server, Template } from "@/lib/types";
 import PageHeader from "@/components/common/PageHeader";
@@ -37,6 +37,7 @@ export default function NewServer() {
   }, []);
 
   function pick(t: Template) {
+    if (!t.supported) return;
     setSelected(t);
     setVars(Object.fromEntries(t.variables.map((v) => [v.key, v.default])));
     setStep(2);
@@ -97,18 +98,34 @@ export default function NewServer() {
                 <button
                   key={t.id}
                   onClick={() => pick(t)}
-                  className="cursor-pointer rounded-lg border border-border bg-card p-4 text-left transition-colors hover:border-primary/50"
+                  disabled={!t.supported}
+                  title={!t.supported ? t.unsupported_reason ?? "Not supported" : undefined}
+                  className={cn(
+                    "rounded-lg border border-border bg-card p-4 text-left transition-colors",
+                    t.supported
+                      ? "cursor-pointer hover:border-primary/50"
+                      : "cursor-not-allowed opacity-60",
+                  )}
                 >
                   <div className="flex items-center justify-between">
                     <div className="font-medium">{t.name}</div>
-                    <Badge variant={t.anonymous_login ? "info" : "warning"}>
-                      {t.anonymous_login ? <Users className="size-3" /> : <UserCheck className="size-3" />}
-                      {t.anonymous_login ? "Anonymous" : "Login"}
-                    </Badge>
+                    {t.supported ? (
+                      <Badge variant={t.anonymous_login ? "info" : "warning"}>
+                        {t.anonymous_login ? <Users className="size-3" /> : <UserCheck className="size-3" />}
+                        {t.anonymous_login ? "Anonymous" : "Login"}
+                      </Badge>
+                    ) : (
+                      <Badge variant="danger">
+                        <Ban className="size-3" /> Not supported
+                      </Badge>
+                    )}
                   </div>
                   <div className="mt-1 text-xs text-muted-foreground">
                     app {t.app_id} · {t.ports.map((p) => `${p.default}/${p.protocol}`).join(", ")}
                   </div>
+                  {!t.supported && t.unsupported_reason && (
+                    <div className="mt-2 text-xs text-danger">{t.unsupported_reason}</div>
+                  )}
                 </button>
               ))}
         </div>

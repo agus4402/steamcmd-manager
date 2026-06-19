@@ -1,0 +1,43 @@
+id: deadside
+name: "Deadside Dedicated Server"
+# DeadsideServer (SteamDB App 1275530) — the dedicated-server app, NOT the
+# Deadside game client (App 895400). Downloads via SteamCMD anonymous login.
+app_id: 1275530
+anonymous_login: true
+install_dir: /data
+# Bad Pixel does not distribute the Deadside server files for self-hosting:
+# the anonymous depot (1275531) downloads as a ~6-byte placeholder with no
+# binaries, so SteamCMD "succeeds" but there is nothing to launch (the
+# container would crash-loop with `./DeadsideServer.sh: No such file`).
+# Kept here as a reference; the panel blocks creating a server from it.
+supported: false
+unsupported_reason: >
+  Deadside's dedicated server files are not available via SteamCMD — Bad Pixel
+  only offers official hosting (e.g. G-PORTAL). The Steam depot ships no server
+  binaries, so it cannot be self-hosted through this panel.
+ports:
+  # Game traffic and the Steam query port are separate UDP ports for Deadside.
+  - name: game
+    protocol: udp
+    default: 7777
+  - name: query
+    protocol: udp
+    default: 27015
+# Deadside is an Unreal Engine 4 server. The shipped binary is Windows-only
+# (DeadsideServer.exe); on this Linux panel it runs via the container's
+# Proton/Wine layer. Only -Port / -QueryPort / -log are reliably driven from
+# the command line — server name, password and slot count live in the
+# generated Game.ini and are exposed here as variables the panel writes there.
+startup: >
+  ./DeadsideServer.sh Deadside?listen -log
+  -Port={{PORT_game}} -QueryPort={{PORT_query}}
+  -ServerName="{{SERVER_NAME}}" -ServerPassword="{{SERVER_PASSWORD}}"
+  -MaxPlayers={{MAX_PLAYERS}}
+variables:
+  - key: SERVER_NAME
+    default: "My Deadside Server"
+  - key: SERVER_PASSWORD
+    default: ""          # empty => the panel generates one
+  - key: MAX_PLAYERS
+    default: "20"
+update_on_start: true

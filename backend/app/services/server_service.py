@@ -76,6 +76,9 @@ def docker_port_bindings(server: Server) -> dict[str, int]:
 
 async def create_server(session: AsyncSession, payload: ServerCreate) -> Server:
     template = get_template(payload.template_id)
+    if not template.supported:
+        reason = template.unsupported_reason or "this game is not supported"
+        raise ServerError(f"template '{template.id}' is not supported: {reason}")
     values = _resolve_variables(template, payload.variables)
 
     server = Server(
