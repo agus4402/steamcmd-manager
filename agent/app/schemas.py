@@ -50,3 +50,13 @@ class StatsResponse(BaseModel):
     blk_write: int = 0
     pids: int = 0
     online_cpus: int = 0
+
+
+class SnapshotResponse(BaseModel):
+    id: str
+    created_at: str
+    size: int
+
+
+class SnapshotListResponse(BaseModel):
+    snapshots: list[SnapshotResponse]

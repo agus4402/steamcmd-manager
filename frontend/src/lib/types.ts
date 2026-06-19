@@ -61,6 +61,21 @@ export interface SteamCredentials {
   guard_code?: string;
 }
 
+export interface Snapshot {
+  id: string;
+  created_at: string;
+  size: number;
+}
+
+export type BackupStatus = "idle" | "creating" | "done" | "error";
+
+export interface BackupJob {
+  status: BackupStatus;
+  id: string | null;
+  size: number;
+  error: string | null;
+}
+
 export interface Stats {
   running: boolean;
   cpu_pct: number;

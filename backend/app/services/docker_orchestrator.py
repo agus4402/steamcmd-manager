@@ -27,6 +27,8 @@ DEFAULT_STOP_TIMEOUT = 30
 # wait_install can block for a long time (big steamcmd downloads).
 _DEFAULT_TIMEOUT = httpx.Timeout(30.0, read=30.0)
 _INSTALL_WAIT_TIMEOUT = httpx.Timeout(30.0, read=None)
+# Volume tar/copy over a large data dir can take minutes — don't cap the read.
+_BACKUP_TIMEOUT = httpx.Timeout(30.0, read=None)
 
 
 @dataclass(slots=True)
@@ -34,6 +36,13 @@ class ContainerState:
     exists: bool
     status: str
     exit_code: int | None = None
+
+
+@dataclass(slots=True)
+class SnapshotInfo:
+    id: str
+    created_at: str
+    size: int
 
 
 @dataclass(slots=True)
@@ -156,6 +165,32 @@ class DockerOrchestrator:
             blk_write=data.get("blk_write", 0),
             pids=data.get("pids", 0),
             online_cpus=data.get("online_cpus", 0),
+        )
+
+    # -- backups / clone ------------------------------------------------------
+
+    def create_snapshot(self, server_id: str) -> SnapshotInfo:
+        data = self._request("POST", f"/servers/{server_id}/backups", timeout=_BACKUP_TIMEOUT).json()
+        return SnapshotInfo(id=data["id"], created_at=data["created_at"], size=data["size"])
+
+    def list_snapshots(self, server_id: str) -> list[SnapshotInfo]:
+        data = self._request("GET", f"/servers/{server_id}/backups").json()
+        return [
+            SnapshotInfo(id=s["id"], created_at=s["created_at"], size=s["size"])
+            for s in data.get("snapshots", [])
+        ]
+
+    def restore_snapshot(self, server_id: str, snapshot_id: str) -> None:
+        self._request(
+            "POST", f"/servers/{server_id}/backups/{snapshot_id}/restore", timeout=_BACKUP_TIMEOUT
+        )
+
+    def delete_snapshot(self, server_id: str, snapshot_id: str) -> None:
+        self._request("DELETE", f"/servers/{server_id}/backups/{snapshot_id}")
+
+    def copy_data(self, src_server_id: str, dst_server_id: str) -> None:
+        self._request(
+            "POST", f"/servers/{src_server_id}/copy/{dst_server_id}", timeout=_BACKUP_TIMEOUT
         )
 
     # -- install / update -----------------------------------------------------

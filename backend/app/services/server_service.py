@@ -106,6 +106,116 @@ async def create_server(session: AsyncSession, payload: ServerCreate) -> Server:
     return server
 
 
+async def clone_server(session: AsyncSession, source: Server, new_name: str) -> Server:
+    """Create a new server with the same template/config and a copy of the data.
+
+    Ports are freshly allocated for the clone; the data volume is copied so an
+    installed source yields a ready-to-start clone.
+    """
+    if source.status in INFLIGHT:
+        raise ServerError("cannot clone while an install/update is in progress")
+    template = get_template(source.template_id)
+
+    clone = Server(
+        name=new_name,
+        template_id=source.template_id,
+        app_id=source.app_id,
+        status=ServerStatus.CREATED.value,
+        variables=dict(source.variables),
+        startup_template=source.startup_template,
+        anonymous_login=source.anonymous_login,
+        update_on_start=source.update_on_start,
+    )
+    session.add(clone)
+    try:
+        await session.flush()
+    except IntegrityError as exc:
+        await session.rollback()
+        raise NameTaken(f"server name '{new_name}' already exists") from exc
+
+    await allocate_ports(session, clone.id, template.ports)
+    await run_in_threadpool(orchestrator.ensure_volume, orchestrator.data_volume(clone.id))
+    await run_in_threadpool(orchestrator.copy_data, source.id, clone.id)
+    # If the source had installed files, the clone is ready to start.
+    if source.status in (ServerStatus.RUNNING.value, ServerStatus.STOPPED.value):
+        clone.status = ServerStatus.STOPPED.value
+
+    await session.commit()
+    await session.refresh(clone)
+    logger.info("cloned server %s -> %s (%s)", source.id, clone.id, clone.name)
+    return clone
+
+
+async def reinstall_server(
+    session: AsyncSession, server: Server, creds: dict[str, str] | None = None
+) -> None:
+    """Wipe the server's container + data volume, then run a fresh install."""
+    if server.status in INFLIGHT:
+        raise ServerError("an install/update is already in progress")
+    creds = await _resolve_creds(server, creds)
+    # Tear down the running container and wipe the data volume.
+    await run_in_threadpool(orchestrator.remove, server.id, True)
+    server.container_id = None
+    server.status = ServerStatus.INSTALLING.value
+    server.error_message = None
+    await session.commit()
+    env = build_install_env(server, creds)
+    asyncio.create_task(_install_job(server.id, env, ServerStatus.STOPPED))
+
+
+# -- backups ------------------------------------------------------------------
+
+# In-memory backup job state per server. A snapshot tars the whole data volume
+# and can run for minutes, so it's a fire-and-forget background task the UI polls
+# (instead of a long-blocking request that the browser would time out on).
+_backup_jobs: dict[str, dict] = {}
+
+
+def get_backup_job(server_id: str) -> dict | None:
+    return _backup_jobs.get(server_id)
+
+
+async def start_backup(server: Server) -> dict:
+    job = _backup_jobs.get(server.id)
+    if job and job["status"] == "creating":
+        raise ServerError("a backup is already in progress")
+    _backup_jobs[server.id] = {"status": "creating", "id": None, "size": 0, "error": None}
+    asyncio.create_task(_backup_job(server.id))
+    return _backup_jobs[server.id]
+
+
+async def _backup_job(server_id: str) -> None:
+    try:
+        snap = await run_in_threadpool(orchestrator.create_snapshot, server_id)
+        _backup_jobs[server_id] = {"status": "done", "id": snap.id, "size": snap.size, "error": None}
+        logger.info("backup %s for %s complete (%d bytes)", snap.id, server_id, snap.size)
+    except DockerError as exc:
+        _backup_jobs[server_id] = {"status": "error", "id": None, "size": 0, "error": str(exc)}
+        logger.error("backup failed for %s: %s", server_id, exc)
+    except Exception as exc:  # noqa: BLE001 — never let a job crash the panel
+        _backup_jobs[server_id] = {"status": "error", "id": None, "size": 0, "error": str(exc)}
+        logger.exception("backup crashed for %s", server_id)
+
+
+async def list_snapshots(server: Server):
+    return await run_in_threadpool(orchestrator.list_snapshots, server.id)
+
+
+async def restore_snapshot(session: AsyncSession, server: Server, snapshot_id: str) -> None:
+    """Stop the server (files can't be replaced underneath it) and restore."""
+    if server.status in INFLIGHT:
+        raise ServerError("an install/update is in progress")
+    await run_in_threadpool(orchestrator.stop, server.id)
+    await run_in_threadpool(orchestrator.restore_snapshot, server.id, snapshot_id)
+    if server.status == ServerStatus.RUNNING.value:
+        server.status = ServerStatus.STOPPED.value
+        await session.commit()
+
+
+async def delete_snapshot(server: Server, snapshot_id: str) -> None:
+    await run_in_threadpool(orchestrator.delete_snapshot, server.id, snapshot_id)
+
+
 async def list_servers(session: AsyncSession) -> list[Server]:
     result = await session.execute(select(Server).order_by(Server.created_at))
     return list(result.scalars().all())

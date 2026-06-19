@@ -1,4 +1,4 @@
-import type { Server, Stats, SteamCredentials, Template } from "./types";
+import type { BackupJob, Server, Snapshot, Stats, SteamCredentials, Template } from "./types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
 
@@ -25,11 +25,18 @@ class ApiError extends Error {
 
 // Abort slow requests so a hung backend never freezes the UI indefinitely.
 const REQUEST_TIMEOUT_MS = 15000;
+// Volume operations (backup/restore/clone) tar or copy the whole data dir and
+// can legitimately run for many minutes — they get a much longer ceiling.
+const LONG_OP_TIMEOUT_MS = 20 * 60 * 1000;
 
-async function request<T>(path: string, opts: RequestInit = {}): Promise<T> {
+async function request<T>(
+  path: string,
+  opts: RequestInit = {},
+  timeoutMs: number = REQUEST_TIMEOUT_MS,
+): Promise<T> {
   const token = getToken();
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   let res: Response;
   try {
     res = await fetch(`${API_BASE}${path}`, {
@@ -89,6 +96,24 @@ export const api = {
       method: "POST",
       body: creds ? JSON.stringify(creds) : undefined,
     }),
+  clone: (id: string, name: string) =>
+    request<Server>(
+      `/api/servers/${id}/clone`,
+      { method: "POST", body: JSON.stringify({ name }) },
+      LONG_OP_TIMEOUT_MS,
+    ),
+  backups: (id: string) => request<Snapshot[]>(`/api/servers/${id}/backups`),
+  // Backups run as a background job: this returns immediately; poll backupStatus.
+  createBackup: (id: string) => request<BackupJob>(`/api/servers/${id}/backups`, { method: "POST" }),
+  backupStatus: (id: string) => request<BackupJob>(`/api/servers/${id}/backups/status`),
+  restoreBackup: (id: string, snapshotId: string) =>
+    request<Server>(
+      `/api/servers/${id}/backups/${snapshotId}/restore`,
+      { method: "POST" },
+      LONG_OP_TIMEOUT_MS,
+    ),
+  deleteBackup: (id: string, snapshotId: string) =>
+    request<null>(`/api/servers/${id}/backups/${snapshotId}`, { method: "DELETE" }),
 };
 
 export function consoleWsUrl(id: string): string {

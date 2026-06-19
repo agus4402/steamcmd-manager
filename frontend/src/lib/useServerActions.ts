@@ -12,6 +12,7 @@ const ACTION_VERB: Record<string, string> = {
   restart: "Restarting",
   install: "Installing",
   update: "Updating",
+  reinstall: "Reinstalling",
   delete: "Deleting",
 };
 

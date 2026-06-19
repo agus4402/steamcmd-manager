@@ -10,10 +10,13 @@ from starlette.concurrency import run_in_threadpool
 
 from app.db import get_db
 from app.schemas.server import (
+    BackupJobOut,
+    CloneRequest,
     ProgressOut,
     ServerCreate,
     ServerOut,
     ServerUpdate,
+    SnapshotOut,
     StatsOut,
     SteamCredentials,
 )
@@ -169,3 +172,86 @@ async def restart_server(
     except server_service.ServerError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
     return ServerOut.model_validate(server)
+
+
+@router.post("/{server_id}/reinstall", response_model=ServerOut, status_code=status.HTTP_202_ACCEPTED)
+async def reinstall_server(
+    server_id: str,
+    creds: SteamCredentials | None = Body(default=None),
+    db: AsyncSession = Depends(get_db),
+) -> ServerOut:
+    server = await _get_or_404(db, server_id)
+    try:
+        await server_service.reinstall_server(db, server, _creds_dict(creds))
+    except server_service.ServerError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    return ServerOut.model_validate(server)
+
+
+@router.post("/{server_id}/clone", response_model=ServerOut, status_code=status.HTTP_201_CREATED)
+async def clone_server(
+    server_id: str, payload: CloneRequest, db: AsyncSession = Depends(get_db)
+) -> ServerOut:
+    server = await _get_or_404(db, server_id)
+    try:
+        clone = await server_service.clone_server(db, server, payload.name)
+    except server_service.NameTaken as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    except server_service.ServerError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    except DockerError as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
+    return ServerOut.model_validate(clone)
+
+
+# -- backups ------------------------------------------------------------------
+
+
+@router.get("/{server_id}/backups", response_model=list[SnapshotOut])
+async def list_backups(server_id: str, db: AsyncSession = Depends(get_db)) -> list[SnapshotOut]:
+    server = await _get_or_404(db, server_id)
+    try:
+        snaps = await server_service.list_snapshots(server)
+    except DockerError as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
+    return [SnapshotOut(id=s.id, created_at=s.created_at, size=s.size) for s in snaps]
+
+
+@router.post("/{server_id}/backups", response_model=BackupJobOut, status_code=status.HTTP_202_ACCEPTED)
+async def create_backup(server_id: str, db: AsyncSession = Depends(get_db)) -> BackupJobOut:
+    server = await _get_or_404(db, server_id)
+    try:
+        job = await server_service.start_backup(server)
+    except server_service.ServerError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    return BackupJobOut(**job)
+
+
+@router.get("/{server_id}/backups/status", response_model=BackupJobOut)
+async def backup_status(server_id: str, db: AsyncSession = Depends(get_db)) -> BackupJobOut:
+    await _get_or_404(db, server_id)
+    job = server_service.get_backup_job(server_id)
+    return BackupJobOut(**job) if job else BackupJobOut(status="idle")
+
+
+@router.post("/{server_id}/backups/{snapshot_id}/restore", response_model=ServerOut)
+async def restore_backup(
+    server_id: str, snapshot_id: str, db: AsyncSession = Depends(get_db)
+) -> ServerOut:
+    server = await _get_or_404(db, server_id)
+    try:
+        await server_service.restore_snapshot(db, server, snapshot_id)
+    except server_service.ServerError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    except DockerError as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
+    return ServerOut.model_validate(server)
+
+
+@router.delete("/{server_id}/backups/{snapshot_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_backup(server_id: str, snapshot_id: str, db: AsyncSession = Depends(get_db)) -> None:
+    server = await _get_or_404(db, server_id)
+    try:
+        await server_service.delete_snapshot(server, snapshot_id)
+    except DockerError as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc

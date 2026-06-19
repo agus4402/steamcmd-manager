@@ -12,11 +12,14 @@ and resource limits — so a compromised game server cannot escalate.
 from __future__ import annotations
 
 import logging
+import re
+import secrets
 from collections.abc import Iterator
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 import docker
-from docker.errors import APIError, NotFound
+from docker.errors import APIError, ContainerError, ImageNotFound, NotFound
 from docker.models.containers import Container
 from requests.exceptions import ConnectionError as RequestsConnectionError
 from requests.exceptions import ReadTimeout
@@ -34,12 +37,35 @@ INSTALL_PREFIX = "gs-install-"
 
 DEFAULT_STOP_TIMEOUT = 30
 
+# Snapshot ids look like "snap-20260618-143015-a1b2" (timestamp + random suffix).
+SNAPSHOT_ID_RE = re.compile(r"^snap-\d{8}-\d{6}-[0-9a-f]{4}$")
+
+
+def _new_snapshot_id() -> str:
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    return f"snap-{ts}-{secrets.token_hex(2)}"
+
+
+def _created_from_id(snapshot_id: str) -> str:
+    try:
+        dt = datetime.strptime(snapshot_id[5:20], "%Y%m%d-%H%M%S").replace(tzinfo=timezone.utc)
+        return dt.isoformat()
+    except (ValueError, IndexError):
+        return ""
+
 
 @dataclass(slots=True)
 class ContainerState:
     exists: bool
     status: str
     exit_code: int | None = None
+
+
+@dataclass(slots=True)
+class SnapshotInfo:
+    id: str
+    created_at: str
+    size: int
 
 
 @dataclass(slots=True)
@@ -237,12 +263,140 @@ class DockerOrchestrator:
             install.remove(force=True)
         if remove_data:
             self.remove_volume(self.data_volume(server_id))
+            self._purge_backups(server_id)
 
     def _require(self, server_id: str) -> Container:
         c = self._get(self.container_name(server_id))
         if c is None:
             raise DockerError(f"container for server {server_id} does not exist")
         return c
+
+    # -- backups / volume ops -------------------------------------------------
+
+    def _run_helper(self, command: list[str], volumes: dict[str, dict[str, str]]) -> str:
+        """Run a one-shot, network-less, unprivileged helper container for volume
+        work (tar/copy). Returns its stdout; raises DockerError on failure."""
+        try:
+            out = self.client.containers.run(
+                image=settings.helper_image,
+                command=command,
+                volumes=volumes,
+                remove=True,
+                network_mode="none",
+                cap_drop=["ALL"],
+                security_opt=["no-new-privileges:true"],
+                stdout=True,
+                stderr=True,
+            )
+        except ContainerError as exc:
+            detail = exc.stderr.decode("utf-8", "replace") if isinstance(exc.stderr, bytes) else exc.stderr
+            raise DockerError(f"volume helper failed: {detail or exc}") from exc
+        except (APIError, ImageNotFound) as exc:  # noqa: BLE001
+            raise DockerError(f"volume helper error: {exc}") from exc
+        return out.decode("utf-8", "replace") if isinstance(out, (bytes, bytearray)) else str(out)
+
+    def create_snapshot(self, server_id: str) -> SnapshotInfo:
+        """Tar the server's data volume into a new backup tarball."""
+        self.ensure_volume(self.data_volume(server_id))
+        self.ensure_volume(settings.backups_volume)
+        snap_id = _new_snapshot_id()
+        dest_dir = f"/backups/{server_id}"
+        archive = f"{dest_dir}/{snap_id}.tar.gz"
+        # Write to a .partial file and atomically rename on success, so a backup
+        # in progress (or a failed one) never appears as a complete snapshot.
+        cmd = [
+            "sh",
+            "-c",
+            f"mkdir -p '{dest_dir}' && rm -f '{dest_dir}'/*.partial 2>/dev/null; "
+            f"tar czf '{archive}.partial' -C /data . && mv '{archive}.partial' '{archive}' && stat -c '%s' '{archive}'",
+        ]
+        out = self._run_helper(
+            cmd,
+            {
+                self.data_volume(server_id): {"bind": "/data", "mode": "ro"},
+                settings.backups_volume: {"bind": "/backups", "mode": "rw"},
+            },
+        )
+        size = 0
+        for tok in reversed(out.split()):
+            if tok.isdigit():
+                size = int(tok)
+                break
+        logger.info("created snapshot %s for %s (%d bytes)", snap_id, server_id, size)
+        return SnapshotInfo(id=snap_id, created_at=_created_from_id(snap_id), size=size)
+
+    def list_snapshots(self, server_id: str) -> list[SnapshotInfo]:
+        self.ensure_volume(settings.backups_volume)
+        dest_dir = f"/backups/{server_id}"
+        cmd = [
+            "sh",
+            "-c",
+            f"cd '{dest_dir}' 2>/dev/null && for f in *.tar.gz; do [ -e \"$f\" ] && stat -c '%n %s' \"$f\"; done || true",
+        ]
+        out = self._run_helper(cmd, {settings.backups_volume: {"bind": "/backups", "mode": "ro"}})
+        snapshots: list[SnapshotInfo] = []
+        for line in out.splitlines():
+            parts = line.strip().split()
+            if len(parts) != 2:
+                continue
+            name, size = parts
+            sid = name[:-7] if name.endswith(".tar.gz") else name
+            if not SNAPSHOT_ID_RE.match(sid):
+                continue
+            snapshots.append(SnapshotInfo(id=sid, created_at=_created_from_id(sid), size=int(size) if size.isdigit() else 0))
+        snapshots.sort(key=lambda s: s.id, reverse=True)
+        return snapshots
+
+    def restore_snapshot(self, server_id: str, snapshot_id: str) -> None:
+        if not SNAPSHOT_ID_RE.match(snapshot_id):
+            raise DockerError("invalid snapshot id")
+        self.ensure_volume(self.data_volume(server_id))
+        archive = f"/backups/{server_id}/{snapshot_id}.tar.gz"
+        cmd = [
+            "sh",
+            "-c",
+            f"test -f '{archive}' || {{ echo 'snapshot not found' >&2; exit 2; }}; "
+            f"rm -rf /data/* /data/.[!.]* 2>/dev/null; tar xzf '{archive}' -C /data",
+        ]
+        self._run_helper(
+            cmd,
+            {
+                self.data_volume(server_id): {"bind": "/data", "mode": "rw"},
+                settings.backups_volume: {"bind": "/backups", "mode": "ro"},
+            },
+        )
+        logger.info("restored snapshot %s into %s", snapshot_id, server_id)
+
+    def delete_snapshot(self, server_id: str, snapshot_id: str) -> None:
+        if not SNAPSHOT_ID_RE.match(snapshot_id):
+            raise DockerError("invalid snapshot id")
+        archive = f"/backups/{server_id}/{snapshot_id}.tar.gz"
+        self._run_helper(
+            ["sh", "-c", f"rm -f '{archive}'"],
+            {settings.backups_volume: {"bind": "/backups", "mode": "rw"}},
+        )
+
+    def copy_data(self, src_server_id: str, dst_server_id: str) -> None:
+        """Copy the contents of one server's data volume into another's (clone)."""
+        self.ensure_volume(self.data_volume(src_server_id))
+        self.ensure_volume(self.data_volume(dst_server_id))
+        self._run_helper(
+            ["sh", "-c", "cp -a /from/. /to/ 2>/dev/null || true"],
+            {
+                self.data_volume(src_server_id): {"bind": "/from", "mode": "ro"},
+                self.data_volume(dst_server_id): {"bind": "/to", "mode": "rw"},
+            },
+        )
+
+    def _purge_backups(self, server_id: str) -> None:
+        """Best-effort removal of a server's backup tarballs (on delete)."""
+        try:
+            self._run_helper(
+                ["sh", "-c", f"rm -rf '/backups/{server_id}'"],
+                {settings.backups_volume: {"bind": "/backups", "mode": "rw"}},
+            )
+        except DockerError as exc:  # noqa: BLE001 — never block deletion on backup cleanup
+            logger.warning("could not purge backups for %s: %s", server_id, exc)
 
     # -- install / update (one-shot) -----------------------------------------
 

@@ -26,6 +26,8 @@ from app.schemas import (
     InstallRequest,
     InstallResultResponse,
     LogsResponse,
+    SnapshotListResponse,
+    SnapshotResponse,
     StateResponse,
     StatsResponse,
     StdinRequest,
@@ -50,6 +52,12 @@ def valid_server_id(server_id: str = Path(...)) -> str:
     if not SERVER_ID_RE.match(server_id):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid server id")
     return server_id
+
+
+def valid_dst_id(dst_id: str = Path(...)) -> str:
+    if not SERVER_ID_RE.match(dst_id):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid destination id")
+    return dst_id
 
 
 def _validate_port_bindings(bindings: dict[str, int]) -> None:
@@ -214,5 +222,54 @@ async def install_state(server_id: str = Depends(valid_server_id)) -> StateRespo
 async def stdin(payload: StdinRequest, server_id: str = Depends(valid_server_id)) -> None:
     try:
         await run_in_threadpool(orchestrator.send_stdin, server_id, payload.data)
+    except DockerError as exc:
+        raise _wrap(exc) from exc
+
+
+# -- backups / clone ----------------------------------------------------------
+
+
+@app.post("/servers/{server_id}/backups", dependencies=authed, response_model=SnapshotResponse)
+async def create_backup(server_id: str = Depends(valid_server_id)) -> SnapshotResponse:
+    try:
+        snap = await run_in_threadpool(orchestrator.create_snapshot, server_id)
+    except DockerError as exc:
+        raise _wrap(exc) from exc
+    return SnapshotResponse(id=snap.id, created_at=snap.created_at, size=snap.size)
+
+
+@app.get("/servers/{server_id}/backups", dependencies=authed, response_model=SnapshotListResponse)
+async def list_backups(server_id: str = Depends(valid_server_id)) -> SnapshotListResponse:
+    try:
+        snaps = await run_in_threadpool(orchestrator.list_snapshots, server_id)
+    except DockerError as exc:
+        raise _wrap(exc) from exc
+    return SnapshotListResponse(
+        snapshots=[SnapshotResponse(id=s.id, created_at=s.created_at, size=s.size) for s in snaps]
+    )
+
+
+@app.post("/servers/{server_id}/backups/{snapshot_id}/restore", dependencies=authed, status_code=204)
+async def restore_backup(snapshot_id: str, server_id: str = Depends(valid_server_id)) -> None:
+    try:
+        await run_in_threadpool(orchestrator.restore_snapshot, server_id, snapshot_id)
+    except DockerError as exc:
+        raise _wrap(exc) from exc
+
+
+@app.delete("/servers/{server_id}/backups/{snapshot_id}", dependencies=authed, status_code=204)
+async def delete_backup(snapshot_id: str, server_id: str = Depends(valid_server_id)) -> None:
+    try:
+        await run_in_threadpool(orchestrator.delete_snapshot, server_id, snapshot_id)
+    except DockerError as exc:
+        raise _wrap(exc) from exc
+
+
+@app.post("/servers/{server_id}/copy/{dst_id}", dependencies=authed, status_code=204)
+async def copy_data(
+    server_id: str = Depends(valid_server_id), dst_id: str = Depends(valid_dst_id)
+) -> None:
+    try:
+        await run_in_threadpool(orchestrator.copy_data, server_id, dst_id)
     except DockerError as exc:
         raise _wrap(exc) from exc

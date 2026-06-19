@@ -38,6 +38,25 @@ class StatsOut(BaseModel):
     online_cpus: int = 0
 
 
+class SnapshotOut(BaseModel):
+    id: str
+    created_at: str
+    size: int
+
+
+class BackupJobOut(BaseModel):
+    """State of a backup creation job (polled by the UI)."""
+
+    status: str  # idle | creating | done | error
+    id: str | None = None
+    size: int = 0
+    error: str | None = None
+
+
+class CloneRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
+
+
 class TemplatePortOut(BaseModel):
     name: str
     protocol: str

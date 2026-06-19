@@ -14,7 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Input, Label } from "@/components/ui/input";
 
 // Actions that touch steamcmd and therefore need an account for paid/non-anon apps.
-const NEEDS_CREDS = new Set(["install", "update", "start"]);
+const NEEDS_CREDS = new Set(["install", "update", "start", "reinstall"]);
 
 type Resolver = (value: SteamCredentials | undefined) => void;
 

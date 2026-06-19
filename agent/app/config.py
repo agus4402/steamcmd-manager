@@ -25,6 +25,10 @@ class Settings(BaseSettings):
     docker_host: str = "unix:///var/run/docker.sock"
     gameserver_image: str = "steamcmd-manager/gameserver:latest"
     steamcmd_cache_volume: str = "steamcmd-cache"
+    # Shared volume holding per-server backup tarballs, and the tiny image used
+    # for volume operations (tar/copy) — runs with no network and no privileges.
+    backups_volume: str = "steamcmd-backups"
+    helper_image: str = "alpine:3.20"
 
     # Host port pool — used to validate that requested port bindings stay in range
     # (a compromised backend can't ask the agent to bind privileged ports like 22).
