@@ -14,6 +14,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import StatCard from "@/components/servers/StatCard";
 import ServerTable from "@/components/servers/ServerTable";
 import AlertList from "@/components/servers/AlertList";
+import FleetUsage from "@/components/servers/FleetUsage";
 
 export default function Dashboard() {
   const { data: servers, error: swrError, isLoading, mutate } = useSWR<Server[]>(
@@ -98,11 +99,7 @@ export default function Dashboard() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <ComingSoon
-                title="Live metrics"
-                description="Aggregate CPU, RAM, disk and network across the fleet."
-                backend="Add a docker-stats endpoint on the agent + /api/servers/{id}/stats."
-              />
+              <FleetUsage servers={list} />
             </CardContent>
           </Card>
 

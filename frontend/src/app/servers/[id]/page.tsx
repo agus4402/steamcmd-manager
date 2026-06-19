@@ -4,7 +4,7 @@ import Link from "next/link";
 import { toast } from "sonner";
 import { Copy, Cpu } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
-import { ComingSoon } from "@/components/common/states";
+import MiniMetrics from "@/components/servers/MiniMetrics";
 import { useServerCtx } from "./server-context";
 
 export default function ServerOverview() {
@@ -45,10 +45,10 @@ export default function ServerOverview() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <ComingSoon
-              title="Resource metrics"
-              description="CPU, memory, disk and network for this server."
-              backend="Expose docker stats via the agent + /api/servers/{id}/stats."
+            <MiniMetrics
+              serverId={server.id}
+              running={server.status === "running"}
+              href={`/servers/${server.id}/metrics`}
             />
           </CardContent>
         </Card>

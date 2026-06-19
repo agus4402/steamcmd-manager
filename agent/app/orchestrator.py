@@ -42,6 +42,23 @@ class ContainerState:
     exit_code: int | None = None
 
 
+@dataclass(slots=True)
+class ContainerStats:
+    """Point-in-time resource usage snapshot for a server container."""
+
+    running: bool
+    cpu_pct: float = 0.0
+    mem_used: int = 0
+    mem_limit: int = 0
+    mem_pct: float = 0.0
+    net_rx: int = 0
+    net_tx: int = 0
+    blk_read: int = 0
+    blk_write: int = 0
+    pids: int = 0
+    online_cpus: int = 0
+
+
 class DockerError(RuntimeError):
     pass
 
@@ -113,6 +130,28 @@ class DockerOrchestrator:
         c.reload()
         exit_code = c.attrs.get("State", {}).get("ExitCode")
         return ContainerState(exists=True, status=c.status, exit_code=exit_code)
+
+    # -- stats ----------------------------------------------------------------
+
+    def stats(self, server_id: str) -> ContainerStats:
+        """One-shot resource snapshot (CPU/mem/net/block) for the server container.
+
+        Returns running=False (with zeros) when the container is absent or not
+        running, so the caller can render an empty state instead of an error.
+        """
+        c = self._get(self.container_name(server_id))
+        if c is None:
+            return ContainerStats(running=False)
+        c.reload()
+        if c.status != "running":
+            return ContainerStats(running=False)
+        try:
+            # stream=False does a single read; Docker populates precpu_stats from
+            # an internal prior sample so CPU% can be computed from one call.
+            raw = c.stats(stream=False)
+        except APIError as exc:  # noqa: BLE001
+            raise DockerError(f"failed to read stats for {server_id}: {exc}") from exc
+        return _parse_stats(raw)
 
     # -- mounts / hardening helpers -------------------------------------------
 
@@ -294,6 +333,58 @@ class DockerOrchestrator:
             os_sock.send(payload.encode("utf-8"))
         finally:
             sock.close()
+
+
+def _parse_stats(raw: dict) -> ContainerStats:
+    """Compute usage metrics from a Docker stats snapshot (defensive on shape).
+
+    Mirrors the formulas the `docker stats` CLI uses; tolerates cgroup v1/v2
+    differences and missing keys (returns 0 for anything unavailable).
+    """
+    cpu = raw.get("cpu_stats", {}) or {}
+    precpu = raw.get("precpu_stats", {}) or {}
+    cpu_usage = cpu.get("cpu_usage", {}) or {}
+    precpu_usage = precpu.get("cpu_usage", {}) or {}
+
+    online = cpu.get("online_cpus") or len(cpu_usage.get("percpu_usage") or []) or 1
+    cpu_delta = cpu_usage.get("total_usage", 0) - precpu_usage.get("total_usage", 0)
+    system_delta = cpu.get("system_cpu_usage", 0) - precpu.get("system_cpu_usage", 0)
+    cpu_pct = (cpu_delta / system_delta) * online * 100.0 if system_delta > 0 and cpu_delta > 0 else 0.0
+
+    mem = raw.get("memory_stats", {}) or {}
+    detail = mem.get("stats", {}) or {}
+    # Exclude reclaimable page cache (cgroup v2: inactive_file, v1: cache).
+    cache = detail.get("inactive_file", detail.get("cache", 0))
+    mem_limit = mem.get("limit", 0)
+    mem_used = max(mem.get("usage", 0) - cache, 0)
+    mem_pct = (mem_used / mem_limit * 100.0) if mem_limit else 0.0
+
+    net_rx = net_tx = 0
+    for nic in (raw.get("networks") or {}).values():
+        net_rx += nic.get("rx_bytes", 0)
+        net_tx += nic.get("tx_bytes", 0)
+
+    blk_read = blk_write = 0
+    for entry in (raw.get("blkio_stats", {}) or {}).get("io_service_bytes_recursive") or []:
+        op = str(entry.get("op", "")).lower()
+        if op == "read":
+            blk_read += entry.get("value", 0)
+        elif op == "write":
+            blk_write += entry.get("value", 0)
+
+    return ContainerStats(
+        running=True,
+        cpu_pct=round(cpu_pct, 2),
+        mem_used=mem_used,
+        mem_limit=mem_limit,
+        mem_pct=round(mem_pct, 2),
+        net_rx=net_rx,
+        net_tx=net_tx,
+        blk_read=blk_read,
+        blk_write=blk_write,
+        pids=(raw.get("pids_stats", {}) or {}).get("current", 0) or 0,
+        online_cpus=int(online),
+    )
 
 
 orchestrator = DockerOrchestrator()

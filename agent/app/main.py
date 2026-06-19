@@ -27,6 +27,7 @@ from app.schemas import (
     InstallResultResponse,
     LogsResponse,
     StateResponse,
+    StatsResponse,
     StdinRequest,
 )
 
@@ -150,6 +151,27 @@ async def state(server_id: str = Depends(valid_server_id)) -> StateResponse:
 async def recent_logs(server_id: str = Depends(valid_server_id), tail: int = 200) -> LogsResponse:
     logs = await run_in_threadpool(orchestrator.recent_logs, server_id, tail)
     return LogsResponse(logs=logs)
+
+
+@app.get("/servers/{server_id}/stats", dependencies=authed, response_model=StatsResponse)
+async def stats(server_id: str = Depends(valid_server_id)) -> StatsResponse:
+    try:
+        s = await run_in_threadpool(orchestrator.stats, server_id)
+    except DockerError as exc:
+        raise _wrap(exc) from exc
+    return StatsResponse(
+        running=s.running,
+        cpu_pct=s.cpu_pct,
+        mem_used=s.mem_used,
+        mem_limit=s.mem_limit,
+        mem_pct=s.mem_pct,
+        net_rx=s.net_rx,
+        net_tx=s.net_tx,
+        blk_read=s.blk_read,
+        blk_write=s.blk_write,
+        pids=s.pids,
+        online_cpus=s.online_cpus,
+    )
 
 
 @app.get("/servers/{server_id}/install/logs", dependencies=authed, response_model=LogsResponse)

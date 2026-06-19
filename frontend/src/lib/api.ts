@@ -1,4 +1,4 @@
-import type { Server, SteamCredentials, Template } from "./types";
+import type { Server, Stats, SteamCredentials, Template } from "./types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
 
@@ -78,6 +78,7 @@ export const api = {
   templates: () => request<Template[]>("/api/templates"),
   servers: () => request<Server[]>("/api/servers"),
   server: (id: string) => request<Server>(`/api/servers/${id}`),
+  stats: (id: string) => request<Stats>(`/api/servers/${id}/stats`),
   create: (body: { template_id: string; name: string; variables: Record<string, string> }) =>
     request<Server>("/api/servers", { method: "POST", body: JSON.stringify(body) }),
   patch: (id: string, body: { variables?: Record<string, string>; startup_template?: string }) =>

@@ -60,3 +60,17 @@ export interface SteamCredentials {
   password: string;
   guard_code?: string;
 }
+
+export interface Stats {
+  running: boolean;
+  cpu_pct: number;
+  mem_used: number;
+  mem_limit: number;
+  mem_pct: number;
+  net_rx: number;
+  net_tx: number;
+  blk_read: number;
+  blk_write: number;
+  pids: number;
+  online_cpus: number;
+}

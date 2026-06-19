@@ -2,12 +2,23 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict
+
 from fastapi import APIRouter, Body, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.concurrency import run_in_threadpool
 
 from app.db import get_db
-from app.schemas.server import ProgressOut, ServerCreate, ServerOut, ServerUpdate, SteamCredentials
+from app.schemas.server import (
+    ProgressOut,
+    ServerCreate,
+    ServerOut,
+    ServerUpdate,
+    StatsOut,
+    SteamCredentials,
+)
 from app.services import server_service
+from app.services.docker_orchestrator import DockerError, orchestrator
 from app.services.template_loader import TemplateError
 
 router = APIRouter(prefix="/api/servers", tags=["servers"])
@@ -61,6 +72,17 @@ async def get_server(server_id: str, db: AsyncSession = Depends(get_db)) -> Serv
     server = await _get_or_404(db, server_id)
     await server_service.reconcile(db, server)
     return await _serialize(server, with_progress=True)
+
+
+@router.get("/{server_id}/stats", response_model=StatsOut)
+async def server_stats(server_id: str, db: AsyncSession = Depends(get_db)) -> StatsOut:
+    """Point-in-time CPU/memory/network/disk usage for the server container."""
+    server = await _get_or_404(db, server_id)
+    try:
+        snapshot = await run_in_threadpool(orchestrator.stats, server.id)
+    except DockerError as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
+    return StatsOut(**asdict(snapshot))
 
 
 @router.patch("/{server_id}", response_model=ServerOut)

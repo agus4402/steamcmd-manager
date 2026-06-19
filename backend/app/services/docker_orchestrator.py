@@ -36,6 +36,21 @@ class ContainerState:
     exit_code: int | None = None
 
 
+@dataclass(slots=True)
+class ContainerStats:
+    running: bool
+    cpu_pct: float = 0.0
+    mem_used: int = 0
+    mem_limit: int = 0
+    mem_pct: float = 0.0
+    net_rx: int = 0
+    net_tx: int = 0
+    blk_read: int = 0
+    blk_write: int = 0
+    pids: int = 0
+    online_cpus: int = 0
+
+
 class DockerError(RuntimeError):
     """Raised for orchestration failures the API layer can surface cleanly."""
 
@@ -123,6 +138,24 @@ class DockerOrchestrator:
         data = self._request(method, path).json()
         return ContainerState(
             exists=data["exists"], status=data["status"], exit_code=data.get("exit_code")
+        )
+
+    # -- stats ----------------------------------------------------------------
+
+    def stats(self, server_id: str) -> ContainerStats:
+        data = self._request("GET", f"/servers/{server_id}/stats").json()
+        return ContainerStats(
+            running=data["running"],
+            cpu_pct=data.get("cpu_pct", 0.0),
+            mem_used=data.get("mem_used", 0),
+            mem_limit=data.get("mem_limit", 0),
+            mem_pct=data.get("mem_pct", 0.0),
+            net_rx=data.get("net_rx", 0),
+            net_tx=data.get("net_tx", 0),
+            blk_read=data.get("blk_read", 0),
+            blk_write=data.get("blk_write", 0),
+            pids=data.get("pids", 0),
+            online_cpus=data.get("online_cpus", 0),
         )
 
     # -- install / update -----------------------------------------------------
