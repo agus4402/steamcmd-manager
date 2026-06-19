@@ -18,7 +18,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from starlette.concurrency import iterate_in_threadpool, run_in_threadpool
 from starlette.responses import StreamingResponse
 
-from app.config import get_settings
+from app.config import get_settings, verify_secrets
 from app.orchestrator import DockerError, orchestrator
 from app.schemas import (
     CreateContainerRequest,
@@ -31,6 +31,7 @@ from app.schemas import (
 )
 
 settings = get_settings()
+verify_secrets(settings)
 app = FastAPI(title="SteamCMD Manager Agent", version="0.1.0")
 
 bearer = HTTPBearer(auto_error=True)
@@ -179,6 +180,12 @@ async def install(
 async def install_wait(server_id: str = Depends(valid_server_id)) -> InstallResultResponse:
     code, logs = await run_in_threadpool(orchestrator.wait_install, server_id)
     return InstallResultResponse(code=code, logs=logs)
+
+
+@app.get("/servers/{server_id}/install/state", dependencies=authed, response_model=StateResponse)
+async def install_state(server_id: str = Depends(valid_server_id)) -> StateResponse:
+    st = await run_in_threadpool(orchestrator.install_state, server_id)
+    return StateResponse(exists=st.exists, status=st.status, exit_code=st.exit_code)
 
 
 @app.post("/servers/{server_id}/stdin", dependencies=authed, status_code=204)

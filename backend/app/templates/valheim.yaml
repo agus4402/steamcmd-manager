@@ -6,11 +6,17 @@ app_id: 896660
 anonymous_login: true
 install_dir: /data
 ports:
-  # NOTE: Valheim also uses game_port+1 / +2 (UDP). Games requiring strictly
-  # consecutive ports are a known v1 limitation of the port pool.
+  # Valheim binds {{PORT_game}} (game) and PORT_game+1 (UDP query/Steam port),
+  # so it needs two consecutive UDP ports — the allocator reserves the block.
   - name: game
     protocol: udp
     default: 2456
+    count: 2
+# Valheim's dedicated server initialises the Steam API as App ID 892970; without
+# it the process exits immediately. LD_LIBRARY_PATH (./linux64) is set generically
+# by the container entrypoint, so the startup line below stays clean.
+env:
+  SteamAppId: "892970"
 startup: >
   ./valheim_server.x86_64 -nographics -batchmode -name "{{SERVER_NAME}}"
   -port {{PORT_game}} -world "Dedicated" -password "{{SERVER_PASSWORD}}" -public 0

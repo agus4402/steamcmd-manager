@@ -8,12 +8,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 from starlette.concurrency import run_in_threadpool
 
-from app.config import get_settings
+from app.config import get_settings, verify_secrets
 from app.db import SessionLocal, engine
 from app.routers import auth, console_ws, servers, templates
 from app.routers.auth import require_user
 from app.services.auth import seed_admin
 from app.services.docker_orchestrator import orchestrator
+from app.services.server_service import recover_inflight_on_boot
 
 logger = logging.getLogger("steamcmd-manager")
 settings = get_settings()
@@ -21,12 +22,19 @@ settings = get_settings()
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    # Seed the admin user on boot (idempotent).
+    # Fail fast in production if any secret is still at its insecure default.
+    verify_secrets(settings)
     async with SessionLocal() as session:
+        # Seed the admin user on boot (idempotent).
         try:
             await seed_admin(session)
         except Exception:  # noqa: BLE001 — don't block startup if DB not migrated yet
             logger.exception("admin seed skipped")
+        # Resolve any install/update left in-flight by a previous crash/restart.
+        try:
+            await recover_inflight_on_boot(session)
+        except Exception:  # noqa: BLE001 — recovery is best-effort, never block boot
+            logger.exception("in-flight recovery skipped")
     yield
 
 

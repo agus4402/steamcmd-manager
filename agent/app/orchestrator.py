@@ -18,6 +18,8 @@ from dataclasses import dataclass
 import docker
 from docker.errors import APIError, NotFound
 from docker.models.containers import Container
+from requests.exceptions import ConnectionError as RequestsConnectionError
+from requests.exceptions import ReadTimeout
 
 from app.config import get_settings
 
@@ -99,7 +101,13 @@ class DockerOrchestrator:
             return None
 
     def state(self, server_id: str) -> ContainerState:
-        c = self._get(self.container_name(server_id))
+        return self._state_of(self._get(self.container_name(server_id)))
+
+    def install_state(self, server_id: str) -> ContainerState:
+        return self._state_of(self._get(self.install_name(server_id)))
+
+    @staticmethod
+    def _state_of(c: Container | None) -> ContainerState:
         if c is None:
             return ContainerState(exists=False, status="absent")
         c.reload()
@@ -223,14 +231,32 @@ class DockerOrchestrator:
             raise DockerError(f"failed to start install for {server_id}: {exc}") from exc
         logger.info("install container started %s", name)
 
-    def wait_install(self, server_id: str) -> tuple[int, str]:
+    def wait_install(self, server_id: str, timeout: int | None = None) -> tuple[int, str]:
+        timeout = timeout if timeout is not None else settings.install_timeout
         c = self._get(self.install_name(server_id))
         if c is None:
             return 0, ""
+
+        def _logs() -> str:
+            try:
+                return c.logs(stdout=True, stderr=True).decode("utf-8", errors="replace")
+            except APIError:
+                return ""
+
         try:
-            result = c.wait()
+            try:
+                result = c.wait(timeout=timeout)
+            except (ReadTimeout, RequestsConnectionError):
+                # Install ran past the cap — stop it and report a clean failure
+                # instead of blocking the waiter (and the panel) forever.
+                logs = _logs() + f"\n[agent] install timed out after {timeout}s"
+                try:
+                    c.stop(timeout=10)
+                except APIError:
+                    pass
+                return 124, logs
             code = int(result.get("StatusCode", -1))
-            logs = c.logs(stdout=True, stderr=True).decode("utf-8", errors="replace")
+            logs = _logs()
         finally:
             try:
                 c.remove(force=True)

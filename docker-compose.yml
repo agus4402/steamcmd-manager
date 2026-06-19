@@ -26,10 +26,12 @@ services:
   agent:
     build: ./agent
     environment:
+      APP_ENV: ${APP_ENV:-development}
       AGENT_TOKEN: ${AGENT_TOKEN:-dev-agent-token-change-me}
       GAMESERVER_IMAGE: ${GAMESERVER_IMAGE:-steamcmd-manager/gameserver:latest}
       PORT_POOL_START: ${PORT_POOL_START:-27015}
       PORT_POOL_END: ${PORT_POOL_END:-27200}
+      INSTALL_TIMEOUT: ${INSTALL_TIMEOUT:-3600}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     security_opt:
@@ -46,6 +48,7 @@ services:
       agent:
         condition: service_started
     environment:
+      APP_ENV: ${APP_ENV:-development}
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-steam}:${POSTGRES_PASSWORD:-steam}@db:5432/${POSTGRES_DB:-steammanager}
       ADMIN_USER: ${ADMIN_USER:-admin}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-changeme}

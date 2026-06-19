@@ -13,6 +13,7 @@ class PortOut(BaseModel):
     name: str
     protocol: str
     host_port: int
+    is_primary: bool = True
 
 
 class ProgressOut(BaseModel):

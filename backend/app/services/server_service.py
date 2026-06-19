@@ -16,12 +16,14 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
 
+from datetime import datetime, timedelta, timezone
+
 from app.db import SessionLocal
 from app.models.server import Server, ServerStatus
 from app.schemas.server import ServerCreate
 from app.schemas.template import PLACEHOLDER_RE, GameTemplate, render_startup
 from app.services.crypto import decrypt_credentials, encrypt_credentials
-from app.services.docker_orchestrator import orchestrator
+from app.services.docker_orchestrator import DockerError, orchestrator
 from app.services.port_manager import allocate_ports
 from app.services.template_loader import get_template
 
@@ -56,8 +58,8 @@ def _resolve_variables(template: GameTemplate, overrides: dict[str, str]) -> dic
 
 
 def port_map(server: Server) -> dict[str, int]:
-    """Placeholder name -> host port (deduped across tcp/udp of the same name)."""
-    return {f"PORT_{p.name}": p.host_port for p in server.ports}
+    """Placeholder name -> base host port (only the primary port of each block)."""
+    return {f"PORT_{p.name}": p.host_port for p in server.ports if p.is_primary}
 
 
 def render_startup_for(server: Server) -> str:
@@ -142,6 +144,10 @@ def build_runtime_env(server: Server, creds: dict[str, str] | None = None) -> di
     env["RUN_INSTALL"] = "0"
     env["VALIDATE"] = "0"
     env["STARTUP_CMD"] = render_startup_for(server)
+    # Static, operator-defined env from the template (e.g. SteamAppId for Valheim).
+    template = get_template(server.template_id)
+    for key, value in template.env.items():
+        env[key] = str(value)
     # Expose declared variables to the startup script's environment too.
     for key, value in server.variables.items():
         env[key] = str(value)
@@ -161,6 +167,26 @@ def parse_progress(logs: str) -> dict[str, float | int] | None:
         return None
     percent, downloaded, total = matches[-1]
     return {"percent": float(percent), "downloaded": int(downloaded), "total": int(total)}
+
+
+# steamcmd surfaces the real cause on lines like "ERROR! Failed to install ...".
+_ERROR_LINE_RE = re.compile(r"^.*(?:ERROR!|FAILED|Fatal Error).*$", re.MULTILINE | re.IGNORECASE)
+_ERROR_MESSAGE_MAX = 4000
+
+
+def summarize_failure(logs: str, code: int) -> str:
+    """Build a user-facing error message that leads with steamcmd's own error.
+
+    The full log is always written to the application log; this returns a bounded
+    summary (highlighted error lines + recent tail) for the `error_message` field.
+    """
+    if not logs:
+        return f"install failed (exit code {code})"
+    error_lines = _ERROR_LINE_RE.findall(logs)
+    highlight = ""
+    if error_lines:
+        highlight = "\n".join(dict.fromkeys(error_lines)) + "\n\n--- recent output ---\n"
+    return (highlight + logs)[-_ERROR_MESSAGE_MAX:]
 
 
 async def get_progress(server: Server) -> dict[str, float | int] | None:
@@ -211,9 +237,15 @@ async def _install_job(
     try:
         await run_in_threadpool(orchestrator.run_install, server_id, env)
         code, logs = await run_in_threadpool(orchestrator.wait_install, server_id)
-    except Exception as exc:  # noqa: BLE001 — never let a job crash the panel
-        logs = str(exc)
-        logger.exception("install job failed for %s", server_id)
+    except DockerError as exc:
+        logs = f"orchestration error: {exc}"
+        logger.error("install job orchestration failed for %s: %s", server_id, exc)
+    except Exception as exc:  # noqa: BLE001 — last-resort guard so a job never crashes the panel
+        logs = f"unexpected error: {exc}"
+        logger.exception("install job crashed for %s", server_id)
+
+    if code != 0:
+        logger.error("install failed for %s (exit %s):\n%s", server_id, code, logs)
 
     async with SessionLocal() as session:
         server = await session.get(Server, server_id)
@@ -221,11 +253,11 @@ async def _install_job(
             return
         if code != 0:
             server.status = ServerStatus.ERRORED.value
-            server.error_message = (logs or f"steamcmd exited with code {code}")[-1000:]
+            server.error_message = summarize_failure(logs, code)
         elif then_start:
             try:
                 await _do_start(session, server, runtime_creds)
-            except Exception as exc:  # noqa: BLE001
+            except DockerError as exc:
                 server.status = ServerStatus.ERRORED.value
                 server.error_message = f"install ok but start failed: {exc}"
                 await session.commit()
@@ -234,6 +266,65 @@ async def _install_job(
             server.error_message = None
         await session.commit()
     logger.info("install job for %s finished (code=%s, then_start=%s)", server_id, code, then_start)
+
+
+async def _resolve_install_outcome(
+    session: AsyncSession, server: Server, code: int, logs: str
+) -> None:
+    """Persist the terminal state of a finished install (STOPPED or ERRORED)."""
+    if code == 0:
+        server.status = ServerStatus.STOPPED.value
+        server.error_message = None
+    else:
+        server.status = ServerStatus.ERRORED.value
+        server.error_message = summarize_failure(logs, code)
+    await session.commit()
+
+
+async def _resume_install_job(server_id: str) -> None:
+    """Re-attach to an install container that outlived a panel restart."""
+    code, logs = -1, ""
+    try:
+        code, logs = await run_in_threadpool(orchestrator.wait_install, server_id)
+    except DockerError as exc:
+        logs = f"orchestration error: {exc}"
+        logger.error("resumed install failed for %s: %s", server_id, exc)
+    except Exception as exc:  # noqa: BLE001 — last-resort guard
+        logs = f"unexpected error: {exc}"
+        logger.exception("resumed install crashed for %s", server_id)
+    async with SessionLocal() as session:
+        server = await session.get(Server, server_id)
+        if server is not None:
+            await _resolve_install_outcome(session, server, code, logs)
+
+
+async def recover_inflight_on_boot(session: AsyncSession) -> None:
+    """Resolve servers left INSTALLING/UPDATING by a panel crash/restart.
+
+    - install container still running  -> resume waiting on it
+    - install container finished        -> record its exit outcome
+    - install container gone            -> mark ERRORED (must be retried)
+    """
+    result = await session.execute(select(Server).where(Server.status.in_(INFLIGHT)))
+    for server in result.scalars().all():
+        try:
+            st = await run_in_threadpool(orchestrator.install_state, server.id)
+        except DockerError as exc:
+            logger.warning("boot recovery: cannot check %s: %s", server.id, exc)
+            continue
+        if st.exists and st.status == "running":
+            asyncio.create_task(_resume_install_job(server.id))
+            logger.info("boot recovery: resuming in-flight install for %s", server.id)
+        elif st.exists:
+            code = st.exit_code if st.exit_code is not None else -1
+            logs = await run_in_threadpool(orchestrator.recent_install_logs, server.id, 200)
+            await _resolve_install_outcome(session, server, code, logs)
+            logger.info("boot recovery: resolved finished install for %s (code=%s)", server.id, code)
+        else:
+            server.status = ServerStatus.ERRORED.value
+            server.error_message = "install/update was interrupted by a panel restart — please retry"
+            await session.commit()
+            logger.info("boot recovery: marked interrupted install for %s as errored", server.id)
 
 
 # -- lifecycle actions --------------------------------------------------------
@@ -363,13 +454,19 @@ async def patch_server(
 # -- state reconciliation -----------------------------------------------------
 
 
+# An in-flight install/update older than this with no live container is stuck.
+_STALE_INFLIGHT = timedelta(seconds=2 * 3600)
+
+
 async def reconcile(session: AsyncSession, server: Server) -> Server:
     """Align the persisted status with the live container state.
 
-    Skips servers with an in-flight install/update (a background job owns them).
+    In-flight installs/updates are normally owned by a background job; here we
+    only step in when the job is demonstrably gone (its install container exited
+    or vanished while the row is stale), so a crashed job can't strand a server.
     """
     if server.status in INFLIGHT:
-        return server
+        return await _reconcile_inflight(session, server)
     state = await run_in_threadpool(orchestrator.state, server.id)
     new_status = server.status
     if not state.exists:
@@ -386,3 +483,32 @@ async def reconcile(session: AsyncSession, server: Server) -> Server:
         server.status = new_status
         await session.commit()
     return server
+
+
+async def _reconcile_inflight(session: AsyncSession, server: Server) -> Server:
+    """Resolve a stuck INSTALLING/UPDATING row when its job is no longer alive."""
+    try:
+        st = await run_in_threadpool(orchestrator.install_state, server.id)
+    except DockerError:
+        return server  # agent hiccup — leave the row for the next poll
+    if st.exists and st.status == "running":
+        return server  # a job is still legitimately installing
+    if st.exists:
+        # Container finished but the row was never updated — the waiter died.
+        code = st.exit_code if st.exit_code is not None else -1
+        logs = await run_in_threadpool(orchestrator.recent_install_logs, server.id, 200)
+        await _resolve_install_outcome(session, server, code, logs)
+    elif _is_stale(server):
+        server.status = ServerStatus.ERRORED.value
+        server.error_message = "install/update stalled with no active job — please retry"
+        await session.commit()
+    return server
+
+
+def _is_stale(server: Server) -> bool:
+    updated = server.updated_at
+    if updated is None:
+        return False
+    if updated.tzinfo is None:
+        updated = updated.replace(tzinfo=timezone.utc)
+    return datetime.now(timezone.utc) - updated > _STALE_INFLIGHT

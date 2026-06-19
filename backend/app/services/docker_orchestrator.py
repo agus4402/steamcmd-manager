@@ -114,7 +114,13 @@ class DockerOrchestrator:
         self._request("DELETE", f"/servers/{server_id}", params={"remove_data": remove_data})
 
     def state(self, server_id: str) -> ContainerState:
-        data = self._request("GET", f"/servers/{server_id}/state").json()
+        return self._state("GET", f"/servers/{server_id}/state")
+
+    def install_state(self, server_id: str) -> ContainerState:
+        return self._state("GET", f"/servers/{server_id}/install/state")
+
+    def _state(self, method: str, path: str) -> ContainerState:
+        data = self._request(method, path).json()
         return ContainerState(
             exists=data["exists"], status=data["status"], exit_code=data.get("exit_code")
         )

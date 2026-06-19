@@ -17,6 +17,10 @@ class PortSpec(BaseModel):
     name: str
     protocol: Literal["tcp", "udp", "both"]
     default: int = Field(ge=1, le=65535)
+    # Number of consecutive ports this entry needs (e.g. Valheim uses port and
+    # port+1 for the UDP query port). The allocator reserves a contiguous block;
+    # only the base port is exposed as the {{PORT_<name>}} placeholder.
+    count: int = Field(default=1, ge=1, le=8)
 
     @field_validator("name")
     @classmethod
@@ -50,7 +54,19 @@ class GameTemplate(BaseModel):
     ports: list[PortSpec] = Field(default_factory=list)
     startup: str
     variables: list[VarSpec] = Field(default_factory=list)
+    # Static environment variables injected into the server container at runtime
+    # (e.g. SteamAppId for Valheim). Defined by the operator in the YAML, NOT
+    # user-editable, so they're trusted and not part of the placeholder whitelist.
+    env: dict[str, str] = Field(default_factory=dict)
     update_on_start: bool = True
+
+    @field_validator("env")
+    @classmethod
+    def _valid_env(cls, v: dict[str, str]) -> dict[str, str]:
+        for key in v:
+            if not TOKEN_RE.match(key):
+                raise ValueError(f"env key '{key}' must match [A-Za-z0-9_]+")
+        return v
 
     @field_validator("id")
     @classmethod
