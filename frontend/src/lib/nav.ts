@@ -35,7 +35,7 @@ export const NAV_GROUPS: NavGroup[] = [
   {
     label: "Automation",
     items: [
-      { label: "Schedule", href: "/schedule", icon: Clock, soon: true },
+      { label: "Schedule", href: "/schedule", icon: Clock },
       { label: "Notifications", href: "/notifications", icon: Bell, soon: true },
     ],
   },
@@ -63,7 +63,7 @@ export const SERVER_NAV: ServerNavItem[] = [
   { segment: "metrics", label: "Metrics" },
   { segment: "network", label: "Network" },
   { segment: "workshop", label: "Workshop", soon: true },
-  { segment: "schedule", label: "Schedule", soon: true },
+  { segment: "schedule", label: "Schedule" },
   { segment: "backups", label: "Backups" },
   { segment: "settings", label: "Settings" },
 ];

@@ -4,6 +4,8 @@ import type {
   ConnectStatus,
   Integration,
   IntegrationTunnel,
+  ScheduleActionType,
+  ScheduledAction,
   Server,
   Snapshot,
   Stats,
@@ -125,6 +127,25 @@ export const api = {
     ),
   deleteBackup: (id: string, snapshotId: string) =>
     request<null>(`/api/servers/${id}/backups/${snapshotId}`, { method: "DELETE" }),
+
+  schedule: (id: string) => request<ScheduledAction[]>(`/api/servers/${id}/schedule`),
+  allSchedules: () => request<ScheduledAction[]>("/api/schedule"),
+  createSchedule: (id: string, body: { action: ScheduleActionType; cron: string; enabled?: boolean }) =>
+    request<ScheduledAction>(`/api/servers/${id}/schedule`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  updateSchedule: (
+    id: string,
+    actionId: string,
+    body: { action?: ScheduleActionType; cron?: string; enabled?: boolean },
+  ) =>
+    request<ScheduledAction>(`/api/servers/${id}/schedule/${actionId}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  deleteSchedule: (id: string, actionId: string) =>
+    request<null>(`/api/servers/${id}/schedule/${actionId}`, { method: "DELETE" }),
 
   integrations: {
     list: () => request<Integration[]>("/api/integrations"),

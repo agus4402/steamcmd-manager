@@ -8,6 +8,7 @@ from app.models.integration import (
     TunnelStatus,
 )
 from app.models.port_allocation import PortAllocation
+from app.models.scheduled_action import ScheduledAction
 from app.models.server import Server, ServerStatus
 from app.models.user import User
 
@@ -17,6 +18,7 @@ __all__ = [
     "IntegrationStatus",
     "IntegrationTunnel",
     "PortAllocation",
+    "ScheduledAction",
     "Server",
     "ServerStatus",
     "TunnelStatus",

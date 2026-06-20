@@ -11,9 +11,9 @@ from starlette.concurrency import run_in_threadpool
 
 from app.config import get_settings, verify_secrets
 from app.db import SessionLocal, engine
-from app.routers import auth, console_ws, integrations, servers, templates
+from app.routers import auth, console_ws, integrations, schedule, servers, templates
 from app.routers.auth import require_user
-from app.services import integration_service
+from app.services import integration_service, scheduler_service
 from app.services.auth import seed_admin
 from app.services.docker_orchestrator import orchestrator
 from app.services.server_service import recover_inflight_on_boot
@@ -48,6 +48,12 @@ async def lifespan(_: FastAPI):
         except Exception:  # noqa: BLE001 — recovery is best-effort, never block boot
             logger.exception("in-flight recovery skipped")
 
+    # Start the cron scheduler and load enabled actions (best-effort).
+    try:
+        await scheduler_service.start()
+    except Exception:  # noqa: BLE001 — never block boot on the scheduler
+        logger.exception("scheduler start skipped")
+
     sync_task: asyncio.Task | None = None
     if settings.integration_sync_interval > 0:
         sync_task = asyncio.create_task(
@@ -58,6 +64,7 @@ async def lifespan(_: FastAPI):
     finally:
         if sync_task is not None:
             sync_task.cancel()
+        await scheduler_service.shutdown()
 
 
 app = FastAPI(title="SteamCMD Server Manager", version="0.1.0", lifespan=lifespan)
@@ -75,6 +82,7 @@ app.include_router(auth.router)
 app.include_router(templates.router, dependencies=[Depends(require_user)])
 app.include_router(servers.router, dependencies=[Depends(require_user)])
 app.include_router(integrations.router, dependencies=[Depends(require_user)])
+app.include_router(schedule.router, dependencies=[Depends(require_user)])
 # WebSocket validates its token from the query string (see console_ws).
 app.include_router(console_ws.router)
 

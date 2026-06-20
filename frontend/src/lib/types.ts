@@ -69,6 +69,21 @@ export interface Snapshot {
   size: number;
 }
 
+export type ScheduleActionType = "start" | "stop" | "restart" | "update" | "backup";
+
+export interface ScheduledAction {
+  id: string;
+  server_id: string;
+  action: ScheduleActionType;
+  cron: string;
+  enabled: boolean;
+  last_run_at: string | null;
+  last_status: string | null;
+  last_error: string | null;
+  created_at: string;
+  server_name: string | null;
+}
+
 export type BackupStatus = "idle" | "creating" | "done" | "error";
 
 export interface BackupJob {
