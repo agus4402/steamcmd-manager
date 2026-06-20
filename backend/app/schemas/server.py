@@ -97,6 +97,14 @@ class ServerUpdate(BaseModel):
     startup_template: str | None = None
 
 
+class BackupConfigUpdate(BaseModel):
+    max_backups: int = Field(ge=0)
+
+
+class RestoreRequest(BaseModel):
+    start_after: bool = False
+
+
 class ServerOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -108,6 +116,7 @@ class ServerOut(BaseModel):
     variables: dict
     anonymous_login: bool
     update_on_start: bool
+    max_backups: int = 0
     error_message: str | None
     ports: list[PortOut]
     created_at: datetime

@@ -182,7 +182,13 @@ async def start_backup(server: Server) -> dict:
     job = _backup_jobs.get(server.id)
     if job and job["status"] == "creating":
         raise ServerError("a backup is already in progress")
-    _backup_jobs[server.id] = {"status": "creating", "id": None, "size": 0, "error": None}
+    _backup_jobs[server.id] = {
+        "status": "creating",
+        "id": None,
+        "size": 0,
+        "error": None,
+        "max_backups": server.max_backups,
+    }
     asyncio.create_task(_backup_job(server.id))
     return _backup_jobs[server.id]
 
@@ -190,8 +196,11 @@ async def start_backup(server: Server) -> dict:
 async def _backup_job(server_id: str) -> None:
     try:
         snap = await run_in_threadpool(orchestrator.create_snapshot, server_id)
+        max_backups = _backup_jobs[server_id].get("max_backups", 0)
         _backup_jobs[server_id] = {"status": "done", "id": snap.id, "size": snap.size, "error": None}
         logger.info("backup %s for %s complete (%d bytes)", snap.id, server_id, snap.size)
+        if max_backups > 0:
+            await _enforce_backup_limit(server_id, max_backups)
     except DockerError as exc:
         _backup_jobs[server_id] = {"status": "error", "id": None, "size": 0, "error": str(exc)}
         logger.error("backup failed for %s: %s", server_id, exc)
@@ -200,19 +209,39 @@ async def _backup_job(server_id: str) -> None:
         logger.exception("backup crashed for %s", server_id)
 
 
+async def _enforce_backup_limit(server_id: str, max_backups: int) -> None:
+    try:
+        snaps = await run_in_threadpool(orchestrator.list_snapshots, server_id)
+        if len(snaps) <= max_backups:
+            return
+        # Sort oldest first; delete all that exceed the limit
+        snaps.sort(key=lambda s: s.created_at)
+        to_delete = snaps[: len(snaps) - max_backups]
+        for snap in to_delete:
+            await run_in_threadpool(orchestrator.delete_snapshot, server_id, snap.id)
+            logger.info("auto-deleted old backup %s for %s (limit=%d)", snap.id, server_id, max_backups)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("backup limit enforcement failed for %s: %s", server_id, exc)
+
+
 async def list_snapshots(server: Server):
     return await run_in_threadpool(orchestrator.list_snapshots, server.id)
 
 
-async def restore_snapshot(session: AsyncSession, server: Server, snapshot_id: str) -> None:
+async def restore_snapshot(
+    session: AsyncSession, server: Server, snapshot_id: str, start_after: bool = False
+) -> None:
     """Stop the server (files can't be replaced underneath it) and restore."""
     if server.status in INFLIGHT:
         raise ServerError("an install/update is in progress")
     await run_in_threadpool(orchestrator.stop, server.id)
     await run_in_threadpool(orchestrator.restore_snapshot, server.id, snapshot_id)
-    if server.status == ServerStatus.RUNNING.value:
+    if start_after:
+        await run_in_threadpool(orchestrator.start, server.id)
+        server.status = ServerStatus.RUNNING.value
+    elif server.status == ServerStatus.RUNNING.value:
         server.status = ServerStatus.STOPPED.value
-        await session.commit()
+    await session.commit()
 
 
 async def delete_snapshot(server: Server, snapshot_id: str) -> None:

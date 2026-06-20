@@ -28,6 +28,7 @@ export interface Server {
   variables: Record<string, string>;
   anonymous_login: boolean;
   update_on_start: boolean;
+  max_backups: number;
   error_message: string | null;
   ports: Port[];
   created_at: string;

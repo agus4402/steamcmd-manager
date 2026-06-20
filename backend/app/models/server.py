@@ -54,6 +54,8 @@ class Server(Base):
     # Encrypted Steam credentials (Phase 8). Fernet token; never stored plain.
     steam_credentials_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    max_backups: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()

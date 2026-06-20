@@ -119,14 +119,19 @@ export const api = {
   // Backups run as a background job: this returns immediately; poll backupStatus.
   createBackup: (id: string) => request<BackupJob>(`/api/servers/${id}/backups`, { method: "POST" }),
   backupStatus: (id: string) => request<BackupJob>(`/api/servers/${id}/backups/status`),
-  restoreBackup: (id: string, snapshotId: string) =>
+  restoreBackup: (id: string, snapshotId: string, startAfter: boolean = false) =>
     request<Server>(
       `/api/servers/${id}/backups/${snapshotId}/restore`,
-      { method: "POST" },
+      { method: "POST", body: JSON.stringify({ start_after: startAfter }) },
       LONG_OP_TIMEOUT_MS,
     ),
   deleteBackup: (id: string, snapshotId: string) =>
     request<null>(`/api/servers/${id}/backups/${snapshotId}`, { method: "DELETE" }),
+  updateBackupConfig: (id: string, maxBackups: number) =>
+    request<Server>(`/api/servers/${id}/backup-config`, {
+      method: "PATCH",
+      body: JSON.stringify({ max_backups: maxBackups }),
+    }),
 
   schedule: (id: string) => request<ScheduledAction[]>(`/api/servers/${id}/schedule`),
   allSchedules: () => request<ScheduledAction[]>("/api/schedule"),

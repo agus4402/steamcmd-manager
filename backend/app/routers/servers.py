@@ -10,9 +10,11 @@ from starlette.concurrency import run_in_threadpool
 
 from app.db import get_db
 from app.schemas.server import (
+    BackupConfigUpdate,
     BackupJobOut,
     CloneRequest,
     ProgressOut,
+    RestoreRequest,
     ServerCreate,
     ServerOut,
     ServerUpdate,
@@ -234,13 +236,26 @@ async def backup_status(server_id: str, db: AsyncSession = Depends(get_db)) -> B
     return BackupJobOut(**job) if job else BackupJobOut(status="idle")
 
 
+@router.patch("/{server_id}/backup-config", response_model=ServerOut)
+async def update_backup_config(
+    server_id: str, payload: BackupConfigUpdate, db: AsyncSession = Depends(get_db)
+) -> ServerOut:
+    server = await _get_or_404(db, server_id)
+    server.max_backups = payload.max_backups
+    await db.commit()
+    return ServerOut.model_validate(server)
+
+
 @router.post("/{server_id}/backups/{snapshot_id}/restore", response_model=ServerOut)
 async def restore_backup(
-    server_id: str, snapshot_id: str, db: AsyncSession = Depends(get_db)
+    server_id: str,
+    snapshot_id: str,
+    payload: RestoreRequest = RestoreRequest(),
+    db: AsyncSession = Depends(get_db),
 ) -> ServerOut:
     server = await _get_or_404(db, server_id)
     try:
-        await server_service.restore_snapshot(db, server, snapshot_id)
+        await server_service.restore_snapshot(db, server, snapshot_id, start_after=payload.start_after)
     except server_service.ServerError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
     except DockerError as exc:
