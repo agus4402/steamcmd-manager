@@ -1,0 +1,31 @@
+id: seven_days_to_die
+name: "7 Days to Die Dedicated Server"
+# App 294420 is the dedicated-server app (not the client App 251570).
+# Ships a Linux binary and is downloadable via SteamCMD anonymously.
+app_id: 294420
+anonymous_login: true
+install_dir: /data
+ports:
+  # 7DTD binds ServerPort (game UDP) plus ServerPort+1 and ServerPort+2
+  # (Steam networking), so three consecutive UDP ports are reserved.
+  - name: game
+    protocol: udp
+    default: 26900
+    count: 3
+  # Telnet console — used for RCON-style remote access.
+  - name: telnet
+    protocol: tcp
+    default: 8081
+startup: >
+  ./startserver.sh -batchmode -nographics -dedicated
+  -ServerPort={{PORT_game}} -TelnetPort={{PORT_telnet}}
+  -ServerName="{{SERVER_NAME}}" -ServerPassword="{{SERVER_PASSWORD}}"
+  -ServerMaxPlayerCount={{MAX_PLAYERS}}
+variables:
+  - key: SERVER_NAME
+    default: "My 7DTD Server"
+  - key: SERVER_PASSWORD
+    default: ""          # empty => panel generates one; leave empty for public server
+  - key: MAX_PLAYERS
+    default: "8"
+update_on_start: true

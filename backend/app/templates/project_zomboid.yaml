@@ -1,0 +1,26 @@
+id: project_zomboid
+name: "Project Zomboid Dedicated Server"
+# App 380870 is the dedicated-server app (not the client App 108600).
+# Ships a Linux binary and is downloadable via SteamCMD anonymously.
+app_id: 380870
+anonymous_login: true
+install_dir: /data
+ports:
+  # PZ binds PORT_game (UDP) for game traffic and PORT_game+1 for the Steam query
+  # port, so two consecutive UDP ports must be reserved.
+  - name: game
+    protocol: udp
+    default: 16261
+    count: 2
+startup: >
+  ./start-server.sh -servername "{{SERVER_NAME}}"
+  -port {{PORT_game}} -adminpassword "{{ADMIN_PASSWORD}}"
+  -password "{{SERVER_PASSWORD}}"
+variables:
+  - key: SERVER_NAME
+    default: "My PZ Server"
+  - key: ADMIN_PASSWORD
+    default: ""          # empty => panel generates a strong password
+  - key: SERVER_PASSWORD
+    default: ""          # empty => panel generates one; leave empty for public server
+update_on_start: true
