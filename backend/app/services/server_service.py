@@ -22,12 +22,21 @@ from app.db import SessionLocal
 from app.models.server import Server, ServerStatus
 from app.schemas.server import ServerCreate
 from app.schemas.template import PLACEHOLDER_RE, GameTemplate, render_startup
+from app.services import notification_service
 from app.services.crypto import decrypt_credentials, encrypt_credentials
 from app.services.docker_orchestrator import DockerError, orchestrator
 from app.services.port_manager import allocate_ports
 from app.services.template_loader import get_template
 
 logger = logging.getLogger("steamcmd-manager.servers")
+
+
+def _notif_excerpt(text: str | None) -> str | None:
+    """Short, single-line excerpt of an error for a notification message."""
+    if not text:
+        return None
+    first = text.strip().splitlines()[0] if text.strip() else ""
+    return first[:200] or None
 
 # Statuses during which lifecycle actions must be rejected (a job owns the row).
 INFLIGHT = {ServerStatus.INSTALLING.value, ServerStatus.UPDATING.value}
@@ -204,9 +213,11 @@ async def _backup_job(server_id: str) -> None:
     except DockerError as exc:
         _backup_jobs[server_id] = {"status": "error", "id": None, "size": 0, "error": str(exc)}
         logger.error("backup failed for %s: %s", server_id, exc)
+        await notification_service.notify("error", "Backup failed", str(exc)[:200], server_id)
     except Exception as exc:  # noqa: BLE001 — never let a job crash the panel
         _backup_jobs[server_id] = {"status": "error", "id": None, "size": 0, "error": str(exc)}
         logger.exception("backup crashed for %s", server_id)
+        await notification_service.notify("error", "Backup failed", str(exc)[:200], server_id)
 
 
 async def _enforce_backup_limit(server_id: str, max_backups: int) -> None:
@@ -389,6 +400,7 @@ async def _install_job(
     if code != 0:
         logger.error("install failed for %s (exit %s):\n%s", server_id, code, logs)
 
+    notify: tuple[str, str, str | None] | None = None
     async with SessionLocal() as session:
         server = await session.get(Server, server_id)
         if server is None:
@@ -396,6 +408,7 @@ async def _install_job(
         if code != 0:
             server.status = ServerStatus.ERRORED.value
             server.error_message = summarize_failure(logs, code)
+            notify = ("error", "Install failed", _notif_excerpt(server.error_message))
         elif then_start:
             try:
                 await _do_start(session, server, runtime_creds)
@@ -403,10 +416,14 @@ async def _install_job(
                 server.status = ServerStatus.ERRORED.value
                 server.error_message = f"install ok but start failed: {exc}"
                 await session.commit()
+                notify = ("error", "Server failed to start", str(exc)[:200])
         else:
             server.status = success_status.value
             server.error_message = None
+            notify = ("success", "Install complete", None)
         await session.commit()
+    if notify is not None:
+        await notification_service.notify(*notify, server_id=server_id)
     logger.info("install job for %s finished (code=%s, then_start=%s)", server_id, code, then_start)
 
 
@@ -622,8 +639,19 @@ async def reconcile(session: AsyncSession, server: Server) -> Server:
             crashed = state.exit_code not in (0, None)
             new_status = ServerStatus.ERRORED.value if crashed else ServerStatus.STOPPED.value
     if new_status != server.status:
+        crashed_now = (
+            new_status == ServerStatus.ERRORED.value
+            and server.status == ServerStatus.RUNNING.value
+        )
         server.status = new_status
         await session.commit()
+        if crashed_now:
+            await notification_service.notify(
+                "error",
+                "Server crashed",
+                f"The container exited unexpectedly (exit code {state.exit_code}).",
+                server.id,
+            )
     return server
 
 

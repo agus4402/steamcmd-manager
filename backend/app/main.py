@@ -11,7 +11,15 @@ from starlette.concurrency import run_in_threadpool
 
 from app.config import get_settings, verify_secrets
 from app.db import SessionLocal, engine
-from app.routers import auth, console_ws, integrations, schedule, servers, templates
+from app.routers import (
+    auth,
+    console_ws,
+    integrations,
+    notifications,
+    schedule,
+    servers,
+    templates,
+)
 from app.routers.auth import require_user
 from app.services import integration_service, scheduler_service
 from app.services.auth import seed_admin
@@ -83,6 +91,7 @@ app.include_router(templates.router, dependencies=[Depends(require_user)])
 app.include_router(servers.router, dependencies=[Depends(require_user)])
 app.include_router(integrations.router, dependencies=[Depends(require_user)])
 app.include_router(schedule.router, dependencies=[Depends(require_user)])
+app.include_router(notifications.router, dependencies=[Depends(require_user)])
 # WebSocket validates its token from the query string (see console_ws).
 app.include_router(console_ws.router)
 

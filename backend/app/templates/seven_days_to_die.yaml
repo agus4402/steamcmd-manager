@@ -17,7 +17,7 @@ ports:
     protocol: tcp
     default: 8081
 startup: >
-  ./startserver.sh -batchmode -nographics -dedicated
+  ./startserver.sh -configfile=serverconfig.xml
   -ServerPort={{PORT_game}} -TelnetPort={{PORT_telnet}}
   -ServerName="{{SERVER_NAME}}" -ServerPassword="{{SERVER_PASSWORD}}"
   -ServerMaxPlayerCount={{MAX_PLAYERS}}

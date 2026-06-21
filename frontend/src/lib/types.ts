@@ -85,6 +85,19 @@ export interface ScheduledAction {
   server_name: string | null;
 }
 
+export type NotificationLevel = "info" | "success" | "warning" | "error";
+
+export interface Notification {
+  id: string;
+  level: NotificationLevel;
+  title: string;
+  message: string | null;
+  server_id: string | null;
+  server_name: string | null;
+  read: boolean;
+  created_at: string;
+}
+
 export type BackupStatus = "idle" | "creating" | "done" | "error";
 
 export interface BackupJob {

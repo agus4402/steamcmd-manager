@@ -3,6 +3,7 @@
 import { Menu, Search } from "lucide-react";
 import Breadcrumbs from "./Breadcrumbs";
 import HealthBadge from "./HealthBadge";
+import NotificationBell from "./NotificationBell";
 import UserMenu from "./UserMenu";
 import { useCommandPalette } from "./CommandPalette";
 
@@ -39,6 +40,7 @@ export default function TopBar({ onMenuClick }: { onMenuClick: () => void }) {
       </button>
 
       <HealthBadge />
+      <NotificationBell />
       <UserMenu />
     </header>
   );

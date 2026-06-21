@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db import SessionLocal
 from app.models.scheduled_action import ScheduledAction
 from app.models.server import Server
-from app.services import server_service
+from app.services import notification_service, server_service
 
 logger = logging.getLogger("steamcmd-manager.scheduler")
 
@@ -137,6 +137,9 @@ async def _run_action(action_id: str) -> None:
         except Exception as exc:  # noqa: BLE001 — record failure, never crash the loop
             status, error = "error", str(exc)
             logger.exception("scheduled %s on %s failed", action.action, server.id)
+            await notification_service.notify(
+                "error", f"Scheduled {action.action} failed", str(exc)[:200], server.id
+            )
         action.last_run_at = datetime.now(timezone.utc)
         action.last_status = status
         action.last_error = error

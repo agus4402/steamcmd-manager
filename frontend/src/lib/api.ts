@@ -4,6 +4,7 @@ import type {
   ConnectStatus,
   Integration,
   IntegrationTunnel,
+  Notification,
   ScheduleActionType,
   ScheduledAction,
   Server,
@@ -151,6 +152,16 @@ export const api = {
     }),
   deleteSchedule: (id: string, actionId: string) =>
     request<null>(`/api/servers/${id}/schedule/${actionId}`, { method: "DELETE" }),
+
+  notifications: {
+    list: (unreadOnly = false, limit = 100) =>
+      request<Notification[]>(`/api/notifications?unread_only=${unreadOnly}&limit=${limit}`),
+    unreadCount: () => request<{ count: number }>("/api/notifications/unread-count"),
+    markRead: (id: string) => request<null>(`/api/notifications/${id}/read`, { method: "POST" }),
+    markAllRead: () => request<{ count: number }>("/api/notifications/read-all", { method: "POST" }),
+    remove: (id: string) => request<null>(`/api/notifications/${id}`, { method: "DELETE" }),
+    clearAll: () => request<null>("/api/notifications", { method: "DELETE" }),
+  },
 
   integrations: {
     list: () => request<Integration[]>("/api/integrations"),
