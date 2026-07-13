@@ -19,6 +19,12 @@ class StdinRequest(BaseModel):
     data: str
 
 
+class WorkshopDownloadRequest(BaseModel):
+    app_id: int
+    item_id: str
+    install_path: str = "steamapps/workshop"
+
+
 class CreateResponse(BaseModel):
     container_id: str
 

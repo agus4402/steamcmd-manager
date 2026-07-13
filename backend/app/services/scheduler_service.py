@@ -64,6 +64,14 @@ async def _load_all() -> None:
         ).scalars().all()
         for action in rows:
             _schedule_job(action)
+        # Workshop auto-update jobs (daily/weekly) live on the server row.
+        servers = (
+            await session.execute(
+                select(Server).where(Server.workshop_auto_update.in_(("daily", "weekly")))
+            )
+        ).scalars().all()
+        for server in servers:
+            sync_workshop_auto_update(server)
     logger.info("scheduler loaded enabled actions")
 
 
@@ -102,6 +110,48 @@ def sync_action(action: ScheduledAction) -> None:
         _schedule_job(action)
     else:
         _unschedule_job(action.id)
+
+
+# -- workshop auto-update jobs -------------------------------------------------
+
+_WS_JOB_PREFIX = "workshop-update:"
+# Fixed schedules (UTC) per auto-update mode; "startup" is handled at start time.
+_WS_CRON = {"daily": "0 4 * * *", "weekly": "0 4 * * 0"}
+
+
+def _ws_job_id(server_id: str) -> str:
+    return f"{_WS_JOB_PREFIX}{server_id}"
+
+
+def sync_workshop_auto_update(server: Server) -> None:
+    """(Re)register or remove a server's workshop auto-update job to match its
+    ``workshop_auto_update`` mode (no-op for ``disabled``/``startup``)."""
+    if _scheduler is None:
+        return
+    job_id = _ws_job_id(server.id)
+    cron = _WS_CRON.get(server.workshop_auto_update)
+    if cron is None:
+        if _scheduler.get_job(job_id) is not None:
+            _scheduler.remove_job(job_id)
+        return
+    _scheduler.add_job(
+        _run_workshop_update,
+        trigger=CronTrigger.from_crontab(cron, timezone="UTC"),
+        id=job_id,
+        args=[server.id],
+        replace_existing=True,
+        misfire_grace_time=3600,
+        coalesce=True,
+    )
+
+
+async def _run_workshop_update(server_id: str) -> None:
+    from app.services import workshop_service  # late import avoids an import cycle
+
+    try:
+        await workshop_service.run_auto_update(server_id, restart=True)
+    except Exception:  # noqa: BLE001 — never crash the scheduler loop
+        logger.exception("scheduled workshop update failed for %s", server_id)
 
 
 # -- job execution ------------------------------------------------------------

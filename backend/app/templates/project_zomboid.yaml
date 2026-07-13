@@ -23,4 +23,10 @@ variables:
     default: ""          # empty => panel generates a strong password
   - key: SERVER_PASSWORD
     default: ""          # empty => panel generates one; leave empty for public server
+# Steam Workshop: PZ's workshop content lives under the CLIENT app 108600 (not the
+# dedicated-server app 380870). Items are downloaded into the data dir; enable them
+# in the server's .ini (WorkshopItems=/Mods=).
+workshop:
+  app_id: 108600
+  install_path: "steamapps/workshop/content/108600"
 update_on_start: true

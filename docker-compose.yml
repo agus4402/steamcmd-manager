@@ -59,6 +59,7 @@ services:
       AGENT_URL: http://agent:8001
       AGENT_TOKEN: ${AGENT_TOKEN:-dev-agent-token-change-me}
       FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:3000}
+      STEAM_API_KEY: ${STEAM_API_KEY:-}
     ports:
       - "8080:8000"
     volumes:

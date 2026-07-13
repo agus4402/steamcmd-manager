@@ -20,6 +20,7 @@ async def list_templates() -> list[TemplateOut]:
             anonymous_login=t.anonymous_login,
             supported=t.supported,
             unsupported_reason=t.unsupported_reason,
+            workshop_supported=t.workshop_supported,
             ports=[{"name": p.name, "protocol": p.protocol, "default": p.default} for p in t.ports],
             variables=[{"key": v.key, "default": v.default} for v in t.variables],
             update_on_start=t.update_on_start,

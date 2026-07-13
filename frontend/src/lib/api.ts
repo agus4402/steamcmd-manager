@@ -12,6 +12,13 @@ import type {
   Stats,
   SteamCredentials,
   Template,
+  WorkshopMod,
+  ImportPreview,
+  ImportResult,
+  ModDetails,
+  SearchResult,
+  SyncResult,
+  AutoUpdateMode,
 } from "./types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
@@ -152,6 +159,58 @@ export const api = {
     }),
   deleteSchedule: (id: string, actionId: string) =>
     request<null>(`/api/servers/${id}/schedule/${actionId}`, { method: "DELETE" }),
+
+  mods: (id: string) => request<WorkshopMod[]>(`/api/servers/${id}/mods`),
+  addMod: (id: string, item: string, name?: string) =>
+    request<WorkshopMod>(`/api/servers/${id}/mods`, {
+      method: "POST",
+      body: JSON.stringify({ item, name: name || null }),
+    }),
+  removeMod: (id: string, modId: string) =>
+    request<null>(`/api/servers/${id}/mods/${modId}`, { method: "DELETE" }),
+  retryMod: (id: string, modId: string) =>
+    request<WorkshopMod>(`/api/servers/${id}/mods/${modId}/retry`, { method: "POST" }),
+  updateMod: (id: string, modId: string) =>
+    request<WorkshopMod>(`/api/servers/${id}/mods/${modId}/update`, { method: "POST" }),
+  checkModUpdates: (id: string) =>
+    request<WorkshopMod[]>(`/api/servers/${id}/mods/check-updates`, { method: "POST" }),
+  updateAllMods: (id: string) =>
+    request<WorkshopMod[]>(`/api/servers/${id}/mods/update-all`, { method: "POST" }),
+  syncMods: (id: string) =>
+    request<SyncResult>(`/api/servers/${id}/mods/sync`, { method: "POST" }),
+  setWorkshopAutoUpdate: (id: string, mode: AutoUpdateMode) =>
+    request<{ mode: AutoUpdateMode }>(`/api/servers/${id}/workshop/auto-update`, {
+      method: "PUT",
+      body: JSON.stringify({ mode }),
+    }),
+  modDetails: (itemId: string, provider = "steam") =>
+    request<ModDetails>(`/api/workshop/mod/${itemId}?provider=${provider}`),
+  searchWorkshop: (params: {
+    gameId: number;
+    query?: string;
+    page?: number;
+    pageSize?: number;
+    sortBy?: string;
+  }) => {
+    const qs = new URLSearchParams({
+      gameId: String(params.gameId),
+      query: params.query ?? "",
+      page: String(params.page ?? 1),
+      pageSize: String(params.pageSize ?? 30),
+    });
+    if (params.sortBy) qs.set("sortBy", params.sortBy);
+    return request<SearchResult>(`/api/workshop/search?${qs.toString()}`);
+  },
+  importPreview: (id: string, input: string) =>
+    request<ImportPreview>(`/api/servers/${id}/mods/import`, {
+      method: "POST",
+      body: JSON.stringify({ input }),
+    }),
+  importInstall: (id: string, input: string, install: string[]) =>
+    request<ImportResult>(`/api/servers/${id}/mods/import`, {
+      method: "POST",
+      body: JSON.stringify({ input, install }),
+    }),
 
   notifications: {
     list: (unreadOnly = false, limit = 100) =>

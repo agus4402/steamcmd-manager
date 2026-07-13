@@ -45,6 +45,32 @@ class VarSpec(BaseModel):
         return v
 
 
+# A workshop install path lives inside the data dir; reject anything that could
+# escape it (absolute paths, "..", shell metacharacters).
+WORKSHOP_PATH_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_./-]*$")
+
+
+class WorkshopSpec(BaseModel):
+    """Steam Workshop support for a template.
+
+    Presence of this block marks the game as workshop-capable (the UI shows the
+    Workshop tab only then). `app_id` is the Steam app whose workshop items are
+    downloaded — often the CLIENT game app id, which can differ from the
+    dedicated-server `app_id`. Downloaded items are copied into the server's data
+    dir under `install_path/<item_id>`.
+    """
+
+    app_id: int = Field(ge=1)
+    install_path: str = "steamapps/workshop"
+
+    @field_validator("install_path")
+    @classmethod
+    def _valid_path(cls, v: str) -> str:
+        if ".." in v or v.startswith("/") or not WORKSHOP_PATH_RE.match(v):
+            raise ValueError(f"workshop install_path '{v}' is not a safe relative path")
+        return v.strip("/")
+
+
 class GameTemplate(BaseModel):
     id: str
     name: str
@@ -66,6 +92,12 @@ class GameTemplate(BaseModel):
     # user-editable, so they're trusted and not part of the placeholder whitelist.
     env: dict[str, str] = Field(default_factory=dict)
     update_on_start: bool = True
+    # Optional Steam Workshop support; when set the game is "workshop-capable".
+    workshop: WorkshopSpec | None = None
+
+    @property
+    def workshop_supported(self) -> bool:
+        return self.workshop is not None
 
     @field_validator("env")
     @classmethod

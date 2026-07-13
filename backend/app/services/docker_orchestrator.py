@@ -193,6 +193,34 @@ class DockerOrchestrator:
             "POST", f"/servers/{src_server_id}/copy/{dst_server_id}", timeout=_BACKUP_TIMEOUT
         )
 
+    # -- workshop -------------------------------------------------------------
+
+    def download_workshop_item(
+        self, server_id: str, app_id: int, item_id: str, install_path: str
+    ) -> tuple[int, str]:
+        data = self._request(
+            "POST",
+            f"/servers/{server_id}/workshop/download",
+            json={"app_id": app_id, "item_id": item_id, "install_path": install_path},
+            timeout=_INSTALL_WAIT_TIMEOUT,
+        ).json()
+        return data["code"], data["logs"]
+
+    def remove_workshop_item(self, server_id: str, install_path: str, item_id: str) -> None:
+        self._request(
+            "DELETE",
+            f"/servers/{server_id}/workshop/{item_id}",
+            params={"install_path": install_path},
+        )
+
+    def list_workshop_items(self, server_id: str, install_path: str) -> list[str]:
+        """Item-id directories present on disk under the install path."""
+        return self._request(
+            "GET",
+            f"/servers/{server_id}/workshop/installed",
+            params={"install_path": install_path},
+        ).json()
+
     # -- install / update -----------------------------------------------------
 
     def run_install(self, server_id: str, env: dict[str, str]) -> None:

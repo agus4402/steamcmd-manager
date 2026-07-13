@@ -28,10 +28,18 @@ RUN mkdir -p /home/steam/steamcmd \
     && chown -R steam:steam /home/steam
 
 # /data is the per-server install dir (mounted as a named volume by the panel).
-RUN mkdir -p /data && chown steam:steam /data
+# /home/steam/Steam is the steamcmd cache (also a named volume). Both must exist
+# AND be owned by steam here so Docker initializes the named volumes with steam
+# ownership; otherwise the mountpoint is auto-created as root and steamcmd (uid
+# 1000) fails to write its downloads with "I/O Operation Failed".
+RUN mkdir -p /data /home/steam/Steam \
+    && chown steam:steam /data /home/steam/Steam
 
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN chmod +x /usr/local/bin/entrypoint.sh
+# Normalize CRLF -> LF so the script runs even if checked out on Windows, then
+# make it executable.
+RUN sed -i 's/\r$//' /usr/local/bin/entrypoint.sh \
+    && chmod +x /usr/local/bin/entrypoint.sh
 
 USER steam
 ENV STEAMCMD_DIR=/home/steam/steamcmd \

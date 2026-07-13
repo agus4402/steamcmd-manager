@@ -55,6 +55,12 @@ class Settings(BaseSettings):
     # How often the periodic reconciliation loop runs (seconds); 0 disables it.
     integration_sync_interval: int = 120
 
+    # Steam Web API key (https://steamcommunity.com/dev/apikey). Optional: when
+    # empty, Workshop search and recursive dependency resolution are unavailable
+    # (they require IPublishedFileService/QueryFiles + GetDetails), but keyless
+    # metadata (GetPublishedFileDetails) and collection resolution still work.
+    steam_api_key: str = ""
+
     # CORS / frontend origin
     frontend_origin: str = "http://localhost:3000"
 

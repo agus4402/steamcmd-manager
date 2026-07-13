@@ -100,9 +100,11 @@ export default function ServerLayout({
           </div>
         )}
 
-        {/* Sub-navigation */}
+        {/* Sub-navigation — the Workshop tab only shows for workshop-capable games. */}
         <div className="mb-5 flex gap-1 overflow-x-auto border-b border-border">
-          {SERVER_NAV.map((item) => {
+          {SERVER_NAV.filter(
+            (item) => item.segment !== "workshop" || server.workshop_app_id != null,
+          ).map((item) => {
             const href = item.segment ? `${base}/${item.segment}` : base;
             const active = item.segment
               ? pathname === href || pathname.startsWith(`${href}/`)

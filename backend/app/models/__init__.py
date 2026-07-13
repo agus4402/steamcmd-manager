@@ -12,6 +12,7 @@ from app.models.port_allocation import PortAllocation
 from app.models.scheduled_action import ScheduledAction
 from app.models.server import Server, ServerStatus
 from app.models.user import User
+from app.models.workshop_mod import WorkshopMod
 
 __all__ = [
     "Integration",
@@ -25,4 +26,5 @@ __all__ = [
     "ServerStatus",
     "TunnelStatus",
     "User",
+    "WorkshopMod",
 ]

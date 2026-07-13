@@ -19,6 +19,7 @@ from app.routers import (
     schedule,
     servers,
     templates,
+    workshop,
 )
 from app.routers.auth import require_user
 from app.services import integration_service, scheduler_service
@@ -92,6 +93,8 @@ app.include_router(servers.router, dependencies=[Depends(require_user)])
 app.include_router(integrations.router, dependencies=[Depends(require_user)])
 app.include_router(schedule.router, dependencies=[Depends(require_user)])
 app.include_router(notifications.router, dependencies=[Depends(require_user)])
+app.include_router(workshop.router, dependencies=[Depends(require_user)])
+app.include_router(workshop.catalog_router, dependencies=[Depends(require_user)])
 # WebSocket validates its token from the query string (see console_ws).
 app.include_router(console_ws.router)
 

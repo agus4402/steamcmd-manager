@@ -56,6 +56,15 @@ class Server(Base):
 
     max_backups: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
 
+    # Steam Workshop content app id, copied from the template at create time when
+    # the game is workshop-capable; NULL means workshop is not supported (the UI
+    # hides the Workshop tab).
+    workshop_app_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # How installed workshop mods are kept current: disabled | daily | weekly | startup.
+    workshop_auto_update: Mapped[str] = mapped_column(
+        String(16), default="disabled", server_default="disabled"
+    )
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()

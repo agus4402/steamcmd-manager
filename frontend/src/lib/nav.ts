@@ -62,7 +62,7 @@ export const SERVER_NAV: ServerNavItem[] = [
   { segment: "config", label: "Config" },
   { segment: "metrics", label: "Metrics" },
   { segment: "network", label: "Network" },
-  { segment: "workshop", label: "Workshop", soon: true },
+  { segment: "workshop", label: "Workshop" },
   { segment: "schedule", label: "Schedule" },
   { segment: "backups", label: "Backups" },
   { segment: "settings", label: "Settings" },

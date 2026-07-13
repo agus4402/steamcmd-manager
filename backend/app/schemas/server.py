@@ -75,6 +75,7 @@ class TemplateOut(BaseModel):
     anonymous_login: bool
     supported: bool = True
     unsupported_reason: str | None = None
+    workshop_supported: bool = False
     ports: list[TemplatePortOut]
     variables: list[TemplateVarOut]
     update_on_start: bool
@@ -117,6 +118,9 @@ class ServerOut(BaseModel):
     anonymous_login: bool
     update_on_start: bool
     max_backups: int = 0
+    # Non-null when the game supports Steam Workshop (drives the Workshop tab).
+    workshop_app_id: int | None = None
+    workshop_auto_update: str = "disabled"
     error_message: str | None
     ports: list[PortOut]
     created_at: datetime

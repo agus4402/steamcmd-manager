@@ -398,6 +398,93 @@ class DockerOrchestrator:
         except DockerError as exc:  # noqa: BLE001 — never block deletion on backup cleanup
             logger.warning("could not purge backups for %s: %s", server_id, exc)
 
+    # -- workshop -------------------------------------------------------------
+
+    def download_workshop_item(
+        self, server_id: str, app_id: int, item_id: str, install_path: str
+    ) -> tuple[int, str]:
+        """Run a one-shot gameserver container that downloads a workshop item via
+        steamcmd and copies it into the server's data volume. Returns (code, logs)."""
+        name = f"gs-ws-{server_id}-{item_id}"
+        old = self._get(name)
+        if old is not None:
+            old.remove(force=True)
+
+        self.ensure_volume(settings.steamcmd_cache_volume)
+        self.ensure_volume(self.data_volume(server_id))
+
+        env = {
+            "WORKSHOP_DOWNLOAD": "1",
+            "WORKSHOP_APP_ID": str(app_id),
+            "WORKSHOP_ITEM_ID": item_id,
+            "WORKSHOP_INSTALL_PATH": install_path,
+            "STEAM_LOGIN_USER": "anonymous",
+            "INSTALL_DIR": "/data",
+        }
+        try:
+            container = self.client.containers.run(
+                image=settings.gameserver_image,
+                name=name,
+                environment=env,
+                volumes=self._volumes_for(server_id),
+                labels=self._labels_for(server_id),
+                detach=True,
+                **self._hardening(),
+            )
+        except APIError as exc:  # noqa: BLE001
+            raise DockerError(f"failed to start workshop download for {server_id}: {exc}") from exc
+
+        def _logs() -> str:
+            try:
+                return container.logs(stdout=True, stderr=True).decode("utf-8", "replace")
+            except APIError:
+                return ""
+
+        try:
+            try:
+                result = container.wait(timeout=settings.install_timeout)
+            except (ReadTimeout, RequestsConnectionError):
+                logs = _logs() + f"\n[agent] workshop download timed out after {settings.install_timeout}s"
+                try:
+                    container.stop(timeout=10)
+                except APIError:
+                    pass
+                return 124, logs
+            code = int(result.get("StatusCode", -1))
+            logs = _logs()
+        finally:
+            try:
+                container.remove(force=True)
+            except APIError:
+                pass
+        return code, logs
+
+    def remove_workshop_item(self, server_id: str, install_path: str, item_id: str) -> None:
+        target = f"/data/{install_path}/{item_id}"
+        self._run_helper(
+            ["sh", "-c", f"rm -rf '{target}'"],
+            {self.data_volume(server_id): {"bind": "/data", "mode": "rw"}},
+        )
+
+    def list_workshop_items(self, server_id: str, install_path: str) -> list[str]:
+        """Return the numeric item-id directories present under the install path
+        on the server's data volume (used by the sync feature)."""
+        target = f"/data/{install_path}"
+        # List immediate child dir names; empty/non-existent dir prints nothing.
+        out = self._run_helper(
+            [
+                "sh",
+                "-c",
+                f"[ -d '{target}' ] && ls -1 '{target}' 2>/dev/null || true",
+            ],
+            {self.data_volume(server_id): {"bind": "/data", "mode": "ro"}},
+        )
+        return [
+            line.strip()
+            for line in out.splitlines()
+            if line.strip().isdigit()
+        ]
+
     # -- install / update (one-shot) -----------------------------------------
 
     def run_install(self, server_id: str, env: dict[str, str]) -> None:

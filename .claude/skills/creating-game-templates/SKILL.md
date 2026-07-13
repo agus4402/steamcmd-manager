@@ -58,6 +58,7 @@ Top-level (`GameTemplate`):
 | `update_on_start` | bool | `true` | Re-run SteamCMD validate before each start. Set `false` if not needed. |
 | `supported` | bool | `true` | `false` ⇒ template stays in the catalog but the panel **blocks creating a server** from it. Use for games that can't be self-hosted. |
 | `unsupported_reason` | str\|null | `null` | Shown to the user when `supported: false`. Explain *why* (e.g. no public server files, Windows-only). |
+| `workshop` | map\|null | `null` | Steam Workshop support. Presence marks the game as workshop-capable (the UI shows the **Workshop** tab only then). See WorkshopSpec + [Steam Workshop](#steam-workshop). |
 
 PortSpec (each `ports` entry):
 
@@ -74,6 +75,13 @@ VarSpec (each `variables` entry):
 |-------|------|---------|-------|
 | `key` | str | — | `[A-Za-z0-9_]+`. Referenced in startup as `{{key}}`. |
 | `default` | str | `""` | Empty `RCON_PASSWORD`/`SERVER_PASSWORD` ⇒ panel auto-generates a strong value. |
+
+WorkshopSpec (the optional `workshop` map):
+
+| Field | Type | Default | Notes |
+|-------|------|---------|-------|
+| `app_id` | int ≥1 | — | Steam app whose **workshop content** is downloaded. Often the **client** game App ID, which differs from the dedicated-server `app_id` (e.g. Project Zomboid: server `380870`, workshop `108600`). |
+| `install_path` | str | `steamapps/workshop` | Where items land inside the data dir, as `install_path/<item_id>`. Must be a **safe relative path** (no leading `/`, no `..`). |
 
 ## Placeholder rules
 
@@ -93,6 +101,38 @@ cd backend && python -c "from app.services.template_loader import _load_all; pri
 
 Errors come back as `invalid template <file>: ...` (e.g. unknown placeholder, bad port
 range, duplicate id). Fix and re-run until you see `OK [...]` including your new id.
+
+## Steam Workshop
+
+Add a `workshop` block **only** if the game actually distributes server mods through
+the Steam Workshop. Its mere presence is what makes the panel show the **Workshop** tab
+for servers created from this template — so omit it entirely for games without workshop
+mods (the tab then stays hidden).
+
+How it works:
+- At create time the template's `workshop.app_id` is copied onto the server
+  (`servers.workshop_app_id`); `NULL` means "no workshop" and the UI hides the tab.
+- Adding a mod runs SteamCMD `+workshop_download_item <app_id> <item_id>` in a one-shot
+  container (the gameserver image's entrypoint handles `WORKSHOP_DOWNLOAD`), then copies
+  the item into the data volume at `INSTALL_DIR/<install_path>/<item_id>`.
+- The panel only **downloads** items into place. **Wiring them into the game is
+  game-specific** and not automatic — document in a comment how the server loads them
+  (e.g. Project Zomboid's `.ini` `WorkshopItems=`/`Mods=`, a `-mod` launch flag, etc.).
+
+Pick the right `app_id`: it's usually the **client** game's App ID (where the workshop
+lives), not the dedicated-server App ID. Verify on the item's Steam Workshop page / SteamDB.
+
+Example (Project Zomboid):
+
+```yaml
+# Workshop content lives under the CLIENT app 108600 (server app is 380870).
+workshop:
+  app_id: 108600
+  install_path: "steamapps/workshop/content/108600"
+```
+
+> Changing the gameserver **entrypoint** (workshop mode) requires rebuilding the
+> `steamcmd-manager/gameserver` image — it is not rebuilt by `docker compose build`.
 
 ## Unsupported games
 
@@ -142,3 +182,7 @@ rejects server creation (`create_server` raises) and the UI shows a "Not support
 - **Shipping a template for a game that has no public server files / no Linux binary** —
   it installs "OK" then crash-loops. Mark it `supported: false` instead (see
   [Unsupported games](#unsupported-games)).
+- **Adding a `workshop` block for a game that has no Steam Workshop mods** — this only
+  clutters the UI with a Workshop tab that downloads nothing useful. Omit it.
+- **Using the dedicated-server `app_id` as `workshop.app_id`** — workshop content almost
+  always lives under the *client* game's App ID. Wrong id ⇒ downloads find nothing.

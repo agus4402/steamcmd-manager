@@ -80,6 +80,64 @@ run_steamcmd() {
     exit "${rc}"
 }
 
+run_workshop_download() {
+    # One-shot Steam Workshop item download. Driven by:
+    #   WORKSHOP_APP_ID       Steam app whose workshop content is fetched
+    #   WORKSHOP_ITEM_ID      workshop item id to download
+    #   WORKSHOP_INSTALL_PATH where to place it under INSTALL_DIR (relative)
+    if [ -z "${WORKSHOP_APP_ID:-}" ] || [ -z "${WORKSHOP_ITEM_ID:-}" ]; then
+        log "ERROR: WORKSHOP_APP_ID and WORKSHOP_ITEM_ID are required"
+        exit 2
+    fi
+
+    local login_args=("+login" "${STEAM_LOGIN_USER}")
+    if [ "${STEAM_LOGIN_USER}" != "anonymous" ]; then
+        login_args+=("${STEAM_LOGIN_PASSWORD:-}")
+        [ -n "${STEAM_GUARD_CODE:-}" ] && login_args+=("${STEAM_GUARD_CODE}")
+        log "logging in as user '${STEAM_LOGIN_USER}' (credentials hidden)"
+    else
+        log "logging in anonymously"
+    fi
+
+    log "downloading workshop item ${WORKSHOP_ITEM_ID} for app ${WORKSHOP_APP_ID} ..."
+    local rc=0
+    set +e
+    "${STEAMCMD_DIR}/steamcmd.sh" \
+        "${login_args[@]}" \
+        +workshop_download_item "${WORKSHOP_APP_ID}" "${WORKSHOP_ITEM_ID}" \
+        +quit
+    rc=$?
+    set -e
+    if [ "${rc}" -ne 0 ]; then
+        log "ERROR: steamcmd workshop download failed (exit ${rc})"
+        exit "${rc}"
+    fi
+
+    # steamcmd writes items to <steam root>/steamapps/workshop/content/<app>/<item>.
+    # The root varies by build, so probe the known locations.
+    local rel="steamapps/workshop/content/${WORKSHOP_APP_ID}/${WORKSHOP_ITEM_ID}"
+    local src=""
+    for base in "/home/steam/Steam" "${STEAMCMD_DIR}" "/home/steam/.steam/steam"; do
+        if [ -d "${base}/${rel}" ]; then src="${base}/${rel}"; break; fi
+    done
+    if [ -z "${src}" ]; then
+        log "ERROR: downloaded item not found on disk after steamcmd reported success"
+        exit 4
+    fi
+
+    local dest="${INSTALL_DIR}/${WORKSHOP_INSTALL_PATH:-steamapps/workshop}/${WORKSHOP_ITEM_ID}"
+    log "installing workshop item into ${dest}"
+    mkdir -p "$(dirname "${dest}")"
+    rm -rf "${dest}"
+    cp -a "${src}" "${dest}"
+    log "workshop item ${WORKSHOP_ITEM_ID} ready"
+}
+
+if [ "${WORKSHOP_DOWNLOAD:-0}" = "1" ]; then
+    run_workshop_download
+    exit 0
+fi
+
 if [ "${RUN_INSTALL:-0}" = "1" ] || [ "${INSTALL_ONLY:-0}" = "1" ]; then
     run_steamcmd
 fi

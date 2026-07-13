@@ -99,6 +99,7 @@ async def create_server(session: AsyncSession, payload: ServerCreate) -> Server:
         startup_template=template.startup,
         anonymous_login=template.anonymous_login,
         update_on_start=template.update_on_start,
+        workshop_app_id=template.workshop.app_id if template.workshop else None,
     )
     session.add(server)
     try:
@@ -137,6 +138,7 @@ async def clone_server(session: AsyncSession, source: Server, new_name: str) -> 
         startup_template=source.startup_template,
         anonymous_login=source.anonymous_login,
         update_on_start=source.update_on_start,
+        workshop_app_id=source.workshop_app_id,
     )
     session.add(clone)
     try:
@@ -539,6 +541,12 @@ async def start_server(
     if server.status in INFLIGHT:
         raise ServerError("an install/update is in progress")
     creds = await _resolve_creds(server, creds)
+    # "Every startup" workshop auto-update: refresh mods in the background (they
+    # apply on the following start, matching the panel's general workshop model).
+    if server.workshop_auto_update == "startup":
+        from app.services import workshop_service  # late import avoids a cycle
+
+        asyncio.create_task(workshop_service.run_auto_update(server.id, restart=False))
     if server.update_on_start:
         # Download/validate first (shown as 'updating' + progress), then auto-start.
         server.status = ServerStatus.UPDATING.value
@@ -617,6 +625,21 @@ async def patch_server(
 _STALE_INFLIGHT = timedelta(seconds=2 * 3600)
 
 
+async def _backfill_workshop(session: AsyncSession, server: Server) -> None:
+    """Self-heal `workshop_app_id` for servers created before workshop support
+    existed (or before their template declared workshop). Runs once per server —
+    after the first access it's a no-op."""
+    if server.workshop_app_id is not None:
+        return
+    try:
+        template = get_template(server.template_id)
+    except Exception:  # noqa: BLE001 — unknown/removed template: nothing to backfill
+        return
+    if template.workshop is not None:
+        server.workshop_app_id = template.workshop.app_id
+        await session.commit()
+
+
 async def reconcile(session: AsyncSession, server: Server) -> Server:
     """Align the persisted status with the live container state.
 
@@ -624,6 +647,7 @@ async def reconcile(session: AsyncSession, server: Server) -> Server:
     only step in when the job is demonstrably gone (its install container exited
     or vanished while the row is stale), so a crashed job can't strand a server.
     """
+    await _backfill_workshop(session, server)
     if server.status in INFLIGHT:
         return await _reconcile_inflight(session, server)
     state = await run_in_threadpool(orchestrator.state, server.id)

@@ -34,6 +34,7 @@ from app.schemas import (
     StateResponse,
     StatsResponse,
     StdinRequest,
+    WorkshopDownloadRequest,
 )
 
 settings = get_settings()
@@ -44,6 +45,15 @@ bearer = HTTPBearer(auto_error=True)
 
 SERVER_ID_RE = re.compile(r"^[A-Za-z0-9]{1,32}$")
 PORT_BINDING_RE = re.compile(r"^(\d{1,5})/(tcp|udp)$")
+WORKSHOP_ITEM_RE = re.compile(r"^\d{1,20}$")
+WORKSHOP_PATH_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_./-]*$")
+
+
+def _validate_workshop(item_id: str, install_path: str) -> None:
+    if not WORKSHOP_ITEM_RE.match(item_id):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid workshop item id")
+    if ".." in install_path or install_path.startswith("/") or not WORKSHOP_PATH_RE.match(install_path):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid install path")
 
 
 async def require_token(creds: HTTPAuthorizationCredentials = Depends(bearer)) -> None:
@@ -280,6 +290,54 @@ async def copy_data(
 ) -> None:
     try:
         await run_in_threadpool(orchestrator.copy_data, server_id, dst_id)
+    except DockerError as exc:
+        raise _wrap(exc) from exc
+
+
+# -- workshop -----------------------------------------------------------------
+
+
+@app.post(
+    "/servers/{server_id}/workshop/download",
+    dependencies=authed,
+    response_model=InstallResultResponse,
+)
+async def workshop_download(
+    payload: WorkshopDownloadRequest, server_id: str = Depends(valid_server_id)
+) -> InstallResultResponse:
+    _validate_workshop(payload.item_id, payload.install_path)
+    try:
+        code, logs = await run_in_threadpool(
+            orchestrator.download_workshop_item,
+            server_id,
+            payload.app_id,
+            payload.item_id,
+            payload.install_path,
+        )
+    except DockerError as exc:
+        raise _wrap(exc) from exc
+    return InstallResultResponse(code=code, logs=logs)
+
+
+@app.get("/servers/{server_id}/workshop/installed", dependencies=authed, response_model=list[str])
+async def workshop_installed(
+    install_path: str = "steamapps/workshop", server_id: str = Depends(valid_server_id)
+) -> list[str]:
+    if ".." in install_path or install_path.startswith("/") or not WORKSHOP_PATH_RE.match(install_path):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid install path")
+    try:
+        return await run_in_threadpool(orchestrator.list_workshop_items, server_id, install_path)
+    except DockerError as exc:
+        raise _wrap(exc) from exc
+
+
+@app.delete("/servers/{server_id}/workshop/{item_id}", dependencies=authed, status_code=204)
+async def workshop_remove(
+    item_id: str, install_path: str = "steamapps/workshop", server_id: str = Depends(valid_server_id)
+) -> None:
+    _validate_workshop(item_id, install_path)
+    try:
+        await run_in_threadpool(orchestrator.remove_workshop_item, server_id, install_path, item_id)
     except DockerError as exc:
         raise _wrap(exc) from exc
 
