@@ -198,9 +198,7 @@ export function LoadOrderList({
         ))}
       </ol>
 
-      {mapRows.length > 0 && (
-        <MapOrder rows={mapRows} setRows={setMapRows} isActive={mapActive} />
-      )}
+      <MapOrder rows={mapRows} setRows={setMapRows} isActive={mapActive} />
 
       <div className="sticky bottom-0 flex items-center gap-2 border-t border-border bg-background/95 py-3 backdrop-blur">
         <p className="mr-auto text-xs text-muted-foreground">
@@ -279,6 +277,12 @@ function MapOrder({
         </p>
       </div>
       <ol className="flex flex-col divide-y divide-border rounded-lg border border-border" aria-label="Map order">
+        {rows.length === 0 && (
+          <li className="px-3 py-3 text-xs text-muted-foreground">
+            None of the installed mods add maps. Map mods and spawn-location mods show up here
+            once installed, so you can order them.
+          </li>
+        )}
         {rows.map((m, i) => {
           const active = isActive(m);
           return (
