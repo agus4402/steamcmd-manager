@@ -6,8 +6,8 @@
 #   - Secretos: cualquier string largo y aleatorio (PANEL_SECRET >= 32 chars).
 #     python -c "import secrets;print(secrets.token_urlsafe(32))"
 #
-# El panel abre en http://NAS_IP:3128 y le habla al backend en NAS_IP:8080, así
-# que ese puerto no se puede cambiar. Los datos quedan en
+# Puertos: panel en NAS_IP:3128, API en NAS_IP:3129. Si cambiás el de la API,
+# cambiá también API_PORT del frontend (el navegador le habla directo). Datos en
 # /DATA/AppData/steamcmd-manager. Las imágenes de GHCR tienen que ser públicas.
 
 name: steamcmd-manager
@@ -76,7 +76,7 @@ services:
       STEAM_API_KEY: ""
     ports:
       - target: 8000
-        published: "8080"
+        published: "3129"
         protocol: tcp
     networks:
       - panel
@@ -88,6 +88,9 @@ services:
     container_name: steamcmd-manager-frontend
     depends_on:
       - backend
+    environment:
+      # Published port of the backend above; the browser calls it directly.
+      API_PORT: "3129"
     ports:
       - target: 3000
         published: "3128"

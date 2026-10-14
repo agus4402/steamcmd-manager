@@ -25,14 +25,24 @@ import type {
   LoadOrder,
 } from "./types";
 
-// NEXT_PUBLIC_* is inlined at build time, so a prebuilt image (GHCR) can't be
-// pointed elsewhere with env vars. Without it, assume the backend is on the same
-// host the panel was opened from, port 8080 (the published compose port).
-const API_BASE =
-  process.env.NEXT_PUBLIC_API_URL ||
-  (typeof window !== "undefined"
-    ? `${window.location.protocol}//${window.location.hostname}:8080`
-    : "http://localhost:8080");
+// NEXT_PUBLIC_* is inlined at build time, so a prebuilt image (GHCR) is pointed
+// at its backend through /runtime-config.js instead (API_URL / API_PORT, read
+// when the container starts). Fallback: same host as the panel, port 8080.
+declare global {
+  interface Window {
+    __RUNTIME_CONFIG__?: { apiUrl?: string; apiPort?: string };
+  }
+}
+
+function resolveApiBase(): string {
+  if (process.env.NEXT_PUBLIC_API_URL) return process.env.NEXT_PUBLIC_API_URL;
+  if (typeof window === "undefined") return "http://localhost:8080";
+  const rc = window.__RUNTIME_CONFIG__ ?? {};
+  if (rc.apiUrl) return rc.apiUrl.replace(/\/$/, "");
+  return `${window.location.protocol}//${window.location.hostname}:${rc.apiPort || "8080"}`;
+}
+
+const API_BASE = resolveApiBase();
 
 const TOKEN_KEY = "steamcmd_token";
 

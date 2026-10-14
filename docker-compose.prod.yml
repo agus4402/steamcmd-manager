@@ -7,7 +7,8 @@
 # with IMAGE_TAG=0.1.0 (default: latest = last released VERSION).
 #
 # Set in .env at least: ADMIN_PASSWORD, JWT_SECRET, PANEL_SECRET, AGENT_TOKEN,
-# POSTGRES_PASSWORD and FRONTEND_ORIGIN=http://<nas-ip>:3000 (CORS).
+# POSTGRES_PASSWORD and FRONTEND_ORIGIN=http://<nas-ip>:<FRONTEND_PORT> (CORS).
+# Ports: FRONTEND_PORT (default 3000), BACKEND_PORT (default 8080).
 
 services:
   db:
@@ -64,9 +65,9 @@ services:
       AGENT_TOKEN: ${AGENT_TOKEN}
       FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:?set FRONTEND_ORIGIN, e.g. http://192.168.1.10:3000}
       STEAM_API_KEY: ${STEAM_API_KEY:-}
-    # The frontend calls the backend at <same host>:8080 — keep this port.
+    # The browser calls this port directly; the frontend learns it via API_PORT.
     ports:
-      - "8080:8000"
+      - "${BACKEND_PORT:-8080}:8000"
     networks:
       - panel
       - orchestration
@@ -76,8 +77,10 @@ services:
     image: ${IMAGE_PREFIX:-ghcr.io/agus4402/steamcmd-manager}-frontend:${IMAGE_TAG:-latest}
     depends_on:
       - backend
+    environment:
+      API_PORT: ${BACKEND_PORT:-8080}
     ports:
-      - "3000:3000"
+      - "${FRONTEND_PORT:-3000}:3000"
     networks:
       - panel
     restart: unless-stopped

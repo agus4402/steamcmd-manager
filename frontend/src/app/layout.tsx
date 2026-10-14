@@ -29,6 +29,11 @@ export default function RootLayout({
 }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en" className={`dark ${firaSans.variable} ${firaCode.variable}`}>
+      <head>
+        {/* Blocking on purpose: lib/api.ts reads it when its module loads. */}
+        {/* eslint-disable-next-line @next/next/no-sync-scripts */}
+        <script src="/runtime-config.js" />
+      </head>
       <body>
         <CredentialsProvider>
           <AppShell>{children}</AppShell>
