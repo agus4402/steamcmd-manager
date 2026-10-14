@@ -37,6 +37,8 @@ services:
       PORT_POOL_START: ${PORT_POOL_START:-27015}
       PORT_POOL_END: ${PORT_POOL_END:-27200}
       INSTALL_TIMEOUT: ${INSTALL_TIMEOUT:-3600}
+      WORKER_MEM_LIMIT: ${WORKER_MEM_LIMIT:-4g}
+      WORKER_CPUS: ${WORKER_CPUS:-2}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     security_opt:

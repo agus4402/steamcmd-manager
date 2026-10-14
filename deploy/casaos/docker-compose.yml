@@ -44,6 +44,9 @@ services:
       PORT_POOL_START: "27015"
       PORT_POOL_END: "27200"
       INSTALL_TIMEOUT: "3600"
+      # Per game-server container limits. Keep MEMORY (JVM -Xmx) ~2g below this.
+      WORKER_MEM_LIMIT: "10g"
+      WORKER_CPUS: "4"
     volumes:
       - type: bind
         source: /var/run/docker.sock
