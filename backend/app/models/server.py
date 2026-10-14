@@ -59,6 +59,9 @@ class Server(Base):
     # Steam beta branch to install/update from (steamcmd `-beta <name>`);
     # NULL = the public default branch.
     steam_branch: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # User order/toggles of game maps provided by workshop mods, e.g.
+    # [{"name": "RavenCreek", "enabled": true}, ...]; NULL = mod order.
+    map_order: Mapped[list | None] = mapped_column(JSON, nullable=True)
 
     # Steam Workshop content app id, copied from the template at create time when
     # the game is workshop-capable; NULL means workshop is not supported (the UI

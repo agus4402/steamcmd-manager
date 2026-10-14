@@ -6,7 +6,10 @@ Layout of an item (under the workshop install path):
     <item>/mods/<ModFolder>/<version>/mod.info       Build 42 (42, 42.0, 42.12, …)
     <item>/mods/<ModFolder>/common/mod.info          Build 42 fallback (version
                                                      folders present but empty)
-    <item>/mods/<ModFolder>/[<version>/|common/]media/maps/<MapName>/
+    <item>/mods/<ModFolder>/[<version>/|common/]media/maps/<MapName>/map.info
+
+Only folders with a map.info are maps (what the server's Map= lists); other
+folders under media/maps (e.g. spawn tweaks patching the vanilla map) aren't.
 
 `mod.info` is `key=value` lines: `id=` (what goes in the server's Mods=),
 `name=`, `require=` (comma-separated mod ids, B42 prefixes them with "\\").
@@ -23,7 +26,8 @@ from app.workshop.inspectors.base import SubmodInfo
 
 LEGACY_B41_BRANCH = "legacy41"
 _VERSION_RE = re.compile(r"^\d+(\.\d+)*$")
-_MAP_RE = re.compile(r"/media/maps/([^/]+)$", re.IGNORECASE)
+_MAP_RE = re.compile(r"/media/maps/([^/]+)/map\.info$", re.IGNORECASE)
+VANILLA_MAP = "Muldraugh, KY"
 
 
 def _version_key(name: str) -> tuple[int, ...]:
@@ -77,15 +81,16 @@ def parse_requires(raw: str | None) -> list[str]:
     return out
 
 
-def maps_in(folder: str, dir_paths: list[str]) -> list[str]:
-    """Map folder names under one mod folder (any version/common), vanilla excluded."""
+def maps_in(folder: str, map_infos: list[str]) -> list[str]:
+    """Map names (folders holding a map.info) under one mod folder, any
+    version/common; the vanilla map is excluded (it's always listed last)."""
     found: list[str] = []
     prefix = folder.rstrip("/") + "/"
-    for path in sorted(dir_paths):
+    for path in sorted(map_infos):
         if not path.startswith(prefix):
             continue
         m = _MAP_RE.search(path)
-        if m and m.group(1) != "Muldraugh, KY" and m.group(1) not in found:
+        if m and m.group(1) != VANILLA_MAP and m.group(1) not in found:
             found.append(m.group(1))
     return found
 
@@ -93,11 +98,12 @@ def maps_in(folder: str, dir_paths: list[str]) -> list[str]:
 def build_submods(
     item_root: str,
     info_paths: list[str],
-    dir_paths: list[str],
+    map_infos: list[str],
     read_info,
     branch: str | None,
 ) -> list[SubmodInfo]:
-    """Pure assembly from listings; `read_info(path) -> str | None` fetches a mod.info."""
+    """Pure assembly from listings (mod.info and map.info paths);
+    `read_info(path) -> str | None` fetches a mod.info."""
     mods_root = f"{item_root.rstrip('/')}/mods"
     result: list[SubmodInfo] = []
     for folder, info_path in sorted(choose_mod_infos(info_paths, mods_root, branch).items()):
@@ -114,7 +120,7 @@ def build_submods(
                 name=info.get("name") or None,
                 folder=folder[len(item_root.rstrip("/")) + 1 :],
                 requires=[r for r in parse_requires(info.get("require")) if r != mod_id],
-                maps=maps_in(folder, dir_paths),
+                maps=maps_in(folder, map_infos),
             )
         )
     return result

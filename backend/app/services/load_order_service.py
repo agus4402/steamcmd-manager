@@ -205,6 +205,41 @@ class LoadOrderEntry:
     warnings: list[str] = field(default_factory=list)
 
 
+@dataclass(slots=True)
+class MapEntry:
+    name: str
+    enabled: bool
+    # Mods providing it; `active` = at least one of them is enabled.
+    mod_ids: list[str]
+    active: bool
+
+
+def compute_map_order(entries: list[LoadOrderEntry], saved: list | None) -> list[MapEntry]:
+    """Maps from all installed mods, in the user's saved order; maps not in it
+    yet follow in mod load order. The vanilla map is not listed (always last)."""
+    providers: dict[str, list[LoadOrderEntry]] = {}
+    for e in entries:
+        for name in e.maps:
+            providers.setdefault(name, []).append(e)
+    order: list[str] = []
+    enabled: dict[str, bool] = {}
+    for item in saved or []:
+        name = item.get("name") if isinstance(item, dict) else None
+        if name in providers and name not in order:
+            order.append(name)
+            enabled[name] = bool(item.get("enabled", True))
+    order += [name for name in providers if name not in order]
+    return [
+        MapEntry(
+            name=name,
+            enabled=enabled.get(name, True),
+            mod_ids=[e.mod_id for e in providers[name]],
+            active=any(e.enabled for e in providers[name]),
+        )
+        for name in order
+    ]
+
+
 def compute_warnings(entries: list[LoadOrderEntry]) -> None:
     """Flag enabled mods whose required mods are missing, disabled, or load later."""
     position = {e.mod_id: i for i, e in enumerate(entries)}
@@ -252,10 +287,18 @@ async def load_order(session: AsyncSession, server: Server) -> list[LoadOrderEnt
     return entries
 
 
+async def map_order(session: AsyncSession, server: Server) -> list[MapEntry]:
+    return compute_map_order(await load_order(session, server), server.map_order)
+
+
 async def set_load_order(
-    session: AsyncSession, server: Server, order: list[tuple[str, bool]]
+    session: AsyncSession,
+    server: Server,
+    order: list[tuple[str, bool]],
+    maps: list[tuple[str, bool]] | None = None,
 ) -> list[LoadOrderEntry]:
-    """Replace the whole order: `order` lists every sub-mod id with its toggle."""
+    """Replace the whole order: `order` lists every sub-mod id with its toggle;
+    `maps` (optional) the map order with toggles."""
     rows = {
         s.id: s
         for s in (
@@ -270,6 +313,8 @@ async def set_load_order(
     for index, (sid, enabled) in enumerate(order):
         rows[sid].load_order = index
         rows[sid].enabled = enabled
+    if maps is not None:
+        server.map_order = [{"name": name, "enabled": on} for name, on in maps]
     await session.commit()
     return await load_order(session, server)
 
@@ -320,7 +365,7 @@ async def runtime(session: AsyncSession, server: Server) -> WorkshopRuntime | No
     # Items never inspected (e.g. inspection failed) still get downloaded by the
     # game; they just contribute no mod ids until inspected.
     items += [m.item_id for m in mods if m.id not in with_submods and m.item_id not in items]
-    maps: list[str] = []
-    for e in enabled:
-        maps += [m for m in e.maps if m not in maps]
+    maps = [
+        m.name for m in compute_map_order(entries, server.map_order) if m.enabled and m.active
+    ]
     return WorkshopRuntime(items=items, mod_ids=[e.mod_id for e in enabled], maps=maps)

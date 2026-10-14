@@ -123,11 +123,12 @@ for item in "${wanted[@]}"; do
         else
             log "workshop item ${item}: no mod.info in ${moddir}"
         fi
-        # Map folders: <mod>/[<version>|common/]media/maps/<MapName>/
-        while IFS= read -r mapdir; do
-            map="$(basename "${mapdir}")"
+        # Maps: <mod>/[<version>|common/]media/maps/<MapName>/map.info — only
+        # folders with a map.info are maps (others patch the vanilla map etc.).
+        while IFS= read -r mapinfo; do
+            map="$(basename "$(dirname "${mapinfo}")")"
             [ "${map}" = "${DEFAULT_MAP}" ] || append_unique maps "${map}"
-        done < <(find "${moddir}" -mindepth 3 -maxdepth 4 -type d -iregex '.*/media/maps/[^/]+' | sort)
+        done < <(find "${moddir}" -mindepth 4 -maxdepth 5 -type f -iregex '.*/media/maps/[^/]+/map\.info' | sort)
     done
 done
 

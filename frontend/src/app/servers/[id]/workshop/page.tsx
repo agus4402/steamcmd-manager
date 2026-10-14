@@ -276,6 +276,7 @@ export default function ServerWorkshopPage() {
         <LoadOrderList
           serverId={server.id}
           entries={loadOrder.entries}
+          maps={loadOrder.maps}
           sandboxPath={sandboxPath}
           onSaved={() => mutateLoadOrder()}
         />

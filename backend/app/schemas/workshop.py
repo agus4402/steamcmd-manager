@@ -143,10 +143,20 @@ class LoadOrderEntryOut(BaseModel):
     warnings: list[str] = Field(default_factory=list)
 
 
+class MapEntryOut(BaseModel):
+    name: str
+    enabled: bool
+    mod_ids: list[str] = Field(default_factory=list)
+    # False when every mod providing it is disabled (then it isn't loaded).
+    active: bool = True
+
+
 class LoadOrderOut(BaseModel):
     # False when the game has no inspector (mods can't be toggled individually).
     supported: bool
     entries: list[LoadOrderEntryOut] = Field(default_factory=list)
+    # Game maps from the mods, in load order (first wins; vanilla map is last).
+    maps: list[MapEntryOut] = Field(default_factory=list)
 
 
 class LoadOrderItem(BaseModel):
@@ -154,9 +164,16 @@ class LoadOrderItem(BaseModel):
     enabled: bool
 
 
+class MapOrderItem(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+    enabled: bool
+
+
 class LoadOrderUpdate(BaseModel):
     # Every sub-mod of the server, in the desired load order.
     order: list[LoadOrderItem] = Field(max_length=2000)
+    # Optional map order; omitted = keep the current one.
+    maps: list[MapOrderItem] | None = Field(default=None, max_length=500)
 
 
 class SubmodToggle(BaseModel):

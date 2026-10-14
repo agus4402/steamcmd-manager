@@ -350,8 +350,19 @@ export interface LoadOrderEntry {
   warnings: string[];
 }
 
+export interface MapEntry {
+  name: string;
+  enabled: boolean;
+  /** Mods providing this map. */
+  mod_ids: string[];
+  /** False when every mod providing it is disabled (then it isn't loaded). */
+  active: boolean;
+}
+
 export interface LoadOrder {
   /** False when the game can't toggle mods individually (no inspector). */
   supported: boolean;
   entries: LoadOrderEntry[];
+  /** Game maps from the mods, in load order (first wins; vanilla map last). */
+  maps: MapEntry[];
 }

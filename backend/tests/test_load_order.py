@@ -40,22 +40,27 @@ def test_parse_mod_info_and_requires():
 
 def test_build_submods_maps_and_skips():
     infos = [f"{M}/A/42/mod.info", f"{M}/B/mod.info", f"{M}/NoId/42/mod.info"]
-    dirs = [
-        f"{M}/A/42/media/maps/CoolTown",
-        f"{M}/A/common/Media/maps/RavenCreek",
-        f"{M}/A/42/media/maps/Muldraugh, KY",
-        f"{M}/A/42/media/maps/CoolTown/sub",
+    map_infos = [
+        f"{M}/A/42/media/maps/CoolTown/map.info",
+        f"{M}/A/common/Media/maps/RavenCreek/map.info",
+        f"{M}/A/42/media/maps/Muldraugh, KY/map.info",  # vanilla: never listed
     ]
     files = {
         f"{M}/A/42/mod.info": "id=AId\nname=A\nrequire=\\BId,\\AId",
         f"{M}/B/mod.info": "id=BId",
         f"{M}/NoId/42/mod.info": "name=broken",
     }
-    subs = pz.build_submods(ROOT, infos, dirs, files.get, None)
+    subs = pz.build_submods(ROOT, infos, map_infos, files.get, None)
     assert [s.mod_id for s in subs] == ["AId", "BId"]
     a = subs[0]
     assert a.folder == "mods/A" and a.requires == ["BId"]  # self-require dropped
     assert a.maps == ["CoolTown", "RavenCreek"]
+    assert subs[1].maps == []
+
+
+def test_folder_without_map_info_is_not_a_map():
+    # e.g. a spawn tweak dropping files into media/maps/SomeFolder (no map.info)
+    assert pz.maps_in(f"{M}/A", [f"{M}/A/media/maps/Spawns/spawnpoints.lua"]) == []
 
 
 def _entry(mod_id, enabled=True, requires=()):
@@ -104,3 +109,24 @@ def test_runtime_env_explicit_mods():
         _pz_server(), None, WorkshopRuntime(items=["1"], mod_ids=None, maps=None)
     )
     assert "WORKSHOP_MOD_IDS" not in env
+
+
+def _mapped(mod_id, maps, enabled=True):
+    e = _entry(mod_id, enabled=enabled)
+    e.maps = maps
+    return e
+
+
+def test_map_order_saved_then_new_and_toggles():
+    from app.services.load_order_service import compute_map_order
+
+    entries = [_mapped("A", ["Town", "Shared"]), _mapped("B", ["Big"]), _mapped("C", ["Off"], False)]
+    order = compute_map_order(entries, [{"name": "Big", "enabled": True},
+                                        {"name": "Town", "enabled": False},
+                                        {"name": "Gone", "enabled": True}])
+    assert [m.name for m in order] == ["Big", "Town", "Shared", "Off"]  # saved, then new
+    by = {m.name: m for m in order}
+    assert not by["Town"].enabled and by["Shared"].enabled
+    assert by["Off"].active is False and by["Big"].mod_ids == ["B"]
+    # default (nothing saved): mod load order
+    assert [m.name for m in compute_map_order(entries, None)] == ["Town", "Shared", "Big", "Off"]

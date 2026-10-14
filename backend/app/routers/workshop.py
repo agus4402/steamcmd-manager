@@ -18,6 +18,7 @@ from app.schemas.workshop import (
     LoadOrderEntryOut,
     LoadOrderOut,
     LoadOrderUpdate,
+    MapEntryOut,
     ModDetailsOut,
     ModSummaryOut,
     SearchResultOut,
@@ -198,8 +199,13 @@ async def remove_mod(server_id: str, mod_id: str, db: AsyncSession = Depends(get
 # -- sub-mods / load order ---------------------------------------------------------
 
 
-def _entries(entries: list[load_order_service.LoadOrderEntry]) -> list[LoadOrderEntryOut]:
-    return [LoadOrderEntryOut.model_validate(e, from_attributes=True) for e in entries]
+def _out(server, entries: list[load_order_service.LoadOrderEntry]) -> LoadOrderOut:
+    maps = load_order_service.compute_map_order(entries, server.map_order)
+    return LoadOrderOut(
+        supported=True,
+        entries=[LoadOrderEntryOut.model_validate(e, from_attributes=True) for e in entries],
+        maps=[MapEntryOut.model_validate(m, from_attributes=True) for m in maps],
+    )
 
 
 @router.get("/{server_id}/mods/load-order", response_model=LoadOrderOut)
@@ -211,7 +217,7 @@ async def get_load_order(server_id: str, db: AsyncSession = Depends(get_db)) -> 
         entries = await load_order_service.load_order(db, server)
     except DockerError as exc:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
-    return LoadOrderOut(supported=True, entries=_entries(entries))
+    return _out(server, entries)
 
 
 @router.put("/{server_id}/mods/load-order", response_model=LoadOrderOut)
@@ -221,11 +227,14 @@ async def put_load_order(
     server = await _server_or_404(db, server_id)
     try:
         entries = await load_order_service.set_load_order(
-            db, server, [(i.id, i.enabled) for i in payload.order]
+            db,
+            server,
+            [(i.id, i.enabled) for i in payload.order],
+            [(m.name, m.enabled) for m in payload.maps] if payload.maps is not None else None,
         )
     except load_order_service.LoadOrderError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
-    return LoadOrderOut(supported=True, entries=_entries(entries))
+    return _out(server, entries)
 
 
 @router.patch("/{server_id}/mods/submods/{submod_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -253,7 +262,7 @@ async def inspect_mod(
         entries = await load_order_service.load_order(db, server)
     except DockerError as exc:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
-    return LoadOrderOut(supported=True, entries=_entries(entries))
+    return _out(server, entries)
 
 
 # -- provider catalog (server-independent) ------------------------------------

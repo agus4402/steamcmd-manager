@@ -208,10 +208,14 @@ export const api = {
       restart ? STOP_TIMEOUT_MS : REQUEST_TIMEOUT_MS,
     ),
   loadOrder: (id: string) => request<LoadOrder>(`/api/servers/${id}/mods/load-order`),
-  setLoadOrder: (id: string, order: { id: string; enabled: boolean }[]) =>
+  setLoadOrder: (
+    id: string,
+    order: { id: string; enabled: boolean }[],
+    maps?: { name: string; enabled: boolean }[],
+  ) =>
     request<LoadOrder>(`/api/servers/${id}/mods/load-order`, {
       method: "PUT",
-      body: JSON.stringify({ order }),
+      body: JSON.stringify({ order, maps }),
     }),
   toggleSubmod: (id: string, submodId: string, enabled: boolean) =>
     request<null>(`/api/servers/${id}/mods/submods/${submodId}`, {

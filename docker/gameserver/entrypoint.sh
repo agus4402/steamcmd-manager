@@ -110,18 +110,34 @@ run_workshop_download() {
         log "logging in anonymously"
     fi
 
+    # steamcmd exits 0 even when a workshop download fails: big items often stop
+    # with "ERROR! Download item <id> failed (Timeout)", leaving a partial
+    # download behind (it resumes on the next run). So judge by its output and
+    # retry until it reports "Success. Downloaded item".
     log "downloading workshop item ${WORKSHOP_ITEM_ID} for app ${WORKSHOP_APP_ID} ..."
-    local rc=0
-    set +e
-    "${STEAMCMD_DIR}/steamcmd.sh" \
-        "${login_args[@]}" \
-        +workshop_download_item "${WORKSHOP_APP_ID}" "${WORKSHOP_ITEM_ID}" \
-        +quit
-    rc=$?
-    set -e
-    if [ "${rc}" -ne 0 ]; then
-        log "ERROR: steamcmd workshop download failed (exit ${rc})"
-        exit "${rc}"
+    local max_attempts=6
+    local attempt=1
+    local out="/tmp/workshop-download.log"
+    local ok=0
+    while [ "${attempt}" -le "${max_attempts}" ]; do
+        log "steamcmd attempt ${attempt}/${max_attempts} for workshop item ${WORKSHOP_ITEM_ID}"
+        set +e
+        "${STEAMCMD_DIR}/steamcmd.sh" \
+            "${login_args[@]}" \
+            +workshop_download_item "${WORKSHOP_APP_ID}" "${WORKSHOP_ITEM_ID}" \
+            +quit 2>&1 | tee "${out}"
+        set -e
+        if grep -q "Success. Downloaded item ${WORKSHOP_ITEM_ID}" "${out}"; then
+            ok=1
+            break
+        fi
+        log "download did not complete ($(grep -o 'ERROR!.*' "${out}" | tail -n1 || echo 'no success line')); resuming"
+        attempt=$((attempt + 1))
+        sleep 3
+    done
+    if [ "${ok}" -ne 1 ]; then
+        log "ERROR: workshop item ${WORKSHOP_ITEM_ID} did not finish downloading after ${max_attempts} attempts"
+        exit 5
     fi
 
     # steamcmd writes items to <steam root>/steamapps/workshop/content/<app>/<item>.
@@ -133,6 +149,11 @@ run_workshop_download() {
     done
     if [ -z "${src}" ]; then
         log "ERROR: downloaded item not found on disk after steamcmd reported success"
+        exit 4
+    fi
+    # An item with folders but no files is a failed download, not a mod.
+    if [ -z "$(find "${src}" -type f -print -quit)" ]; then
+        log "ERROR: workshop item ${WORKSHOP_ITEM_ID} downloaded no files"
         exit 4
     fi
 
