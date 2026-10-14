@@ -68,8 +68,11 @@ def _resolve_variables(template: GameTemplate, overrides: dict[str, str]) -> dic
 
 
 def port_map(server: Server) -> dict[str, int]:
-    """Placeholder name -> base host port (only the primary port of each block)."""
-    return {f"PORT_{p.name}": p.host_port for p in server.ports if p.is_primary}
+    """Placeholder name -> base port the game binds (primary port of each block).
+
+    Usually the host port; a tunnel can switch it to its public port (see
+    PortAllocation.container_port)."""
+    return {f"PORT_{p.name}": p.game_port for p in server.ports if p.is_primary}
 
 
 def render_startup_for(server: Server) -> str:
@@ -80,8 +83,9 @@ def render_startup_for(server: Server) -> str:
 
 
 def docker_port_bindings(server: Server) -> dict[str, int]:
-    """{'27015/udp': 27015, ...} — same number on host and in container."""
-    return {f"{p.host_port}/{p.protocol}": p.host_port for p in server.ports}
+    """{'<container port>/udp': <host port>, ...} — the same number unless a
+    tunnel set a different game-side port."""
+    return {f"{p.game_port}/{p.protocol}": p.host_port for p in server.ports}
 
 
 async def create_server(session: AsyncSession, payload: ServerCreate) -> Server:

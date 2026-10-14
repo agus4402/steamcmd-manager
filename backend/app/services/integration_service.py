@@ -218,7 +218,50 @@ async def sync_integration(session: AsyncSession, integration: Integration) -> N
             )
 
     integration.last_sync_at = datetime.now(timezone.utc)
+    for tunnel in local:
+        await _advertise_public_ports(session, tunnel)
     await session.commit()
+
+
+def _public_port(remote_domain: str | None) -> int | None:
+    _, sep, port = (remote_domain or "").rpartition(":")
+    return int(port) if sep and port.isdigit() else None
+
+
+async def _advertise_public_ports(
+    session: AsyncSession, tunnel: IntegrationTunnel, *, removed: bool = False
+) -> None:
+    """Make the game listen on the tunnel's public port numbers (applies on the
+    next start).
+
+    Only for ports with a tunnel profile: those tunnels reserve the whole port
+    block contiguously (e.g. playit "project-zomboid": public P, P+1 -> local
+    L, L+1), and games like Project Zomboid tell clients to open their second
+    port by number — which must exist on the public side. Docker then maps
+    host L -> container P, so the provider still forwards to the host ports.
+    """
+    if tunnel.server_id is None or await _tunnel_profile(session, tunnel) is None:
+        return
+    server = await session.get(Server, tunnel.server_id)
+    if server is None:
+        return
+    primary = next(
+        (p for p in server.ports if p.is_primary and p.host_port == tunnel.local_port), None
+    )
+    if primary is None:
+        return
+    block = [p for p in server.ports if p.name == primary.name and p.protocol == primary.protocol]
+    public = None if removed else _public_port(tunnel.remote_domain)
+    if tunnel.status != TunnelStatus.ACTIVE.value:
+        public = None
+    for p in block:
+        wanted = public + (p.host_port - primary.host_port) if public else None
+        if p.container_port != wanted:
+            p.container_port = wanted
+            logger.info(
+                "server %s port %s/%s now listens on %s (restart to apply)",
+                server.id, p.host_port, p.protocol, wanted or p.host_port,
+            )
 
 
 async def sync_all() -> None:
@@ -349,5 +392,6 @@ async def delete_tunnel(session: AsyncSession, integration: Integration, tunnel_
         await provider.delete_tunnel(session, integration, tunnel)
     except Exception as exc:  # noqa: BLE001
         raise IntegrationError(f"could not delete tunnel: {exc}") from exc
+    await _advertise_public_ports(session, tunnel, removed=True)
     await session.delete(tunnel)
     await session.commit()

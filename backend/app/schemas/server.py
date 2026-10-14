@@ -14,6 +14,9 @@ class PortOut(BaseModel):
     protocol: str
     host_port: int
     is_primary: bool = True
+    # Port the game listens on inside its container (a tunnel's public port);
+    # null = same as host_port.
+    container_port: int | None = None
 
 
 class ProgressOut(BaseModel):

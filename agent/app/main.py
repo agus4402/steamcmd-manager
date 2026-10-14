@@ -98,13 +98,15 @@ def _validate_port_bindings(bindings: dict[str, int]) -> None:
         if not m:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, f"bad port binding '{key}'")
         container_port = int(m.group(1))
-        # Both the container port and the host port must stay inside the pool.
-        for p in (container_port, host_port):
-            if not (lo <= p <= hi):
-                raise HTTPException(
-                    status.HTTP_400_BAD_REQUEST,
-                    f"port {p} outside pool {lo}-{hi}",
-                )
+        # The host port must stay inside the pool. The container port lives in
+        # the container's own network namespace (any valid port): it can differ
+        # when the game must listen on a tunnel's public port number.
+        if not (lo <= host_port <= hi):
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST, f"port {host_port} outside pool {lo}-{hi}"
+            )
+        if not (1 <= container_port <= 65535):
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, f"bad container port {container_port}")
 
 
 def _validate_volume_name(name: str) -> None:

@@ -34,5 +34,15 @@ class PortAllocation(Base):
     # as the {{PORT_<name>}} placeholder; extra ports (port+1, ...) are published
     # to Docker but never referenced directly in the startup command.
     is_primary: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    # Port the game binds inside its container when it must differ from the
+    # host port: behind a tunnel whose public port differs (playit), games that
+    # advertise their own port to clients (Project Zomboid's RakNet port) must
+    # listen on the PUBLIC number. Docker maps host_port -> container_port.
+    # NULL = same as host_port.
+    container_port: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    @property
+    def game_port(self) -> int:
+        return self.container_port or self.host_port
 
     server: Mapped[Server] = relationship(back_populates="ports")

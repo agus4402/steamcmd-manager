@@ -131,3 +131,19 @@ def test_pz_game_port_uses_playit_zomboid_profile():
     assert game.tunnel_profile == "project-zomboid" and game.protocol == "udp"
     with pytest.raises(ValidationError):
         _tpl(ports=[{"name": "g", "protocol": "udp", "default": 1, "tunnel_profile": "Bad Profile"}])
+
+
+def test_container_port_from_tunnel_drives_bindings_and_env():
+    from app.services.integration_service import _public_port
+
+    s = _pz_server()
+    for p in s.ports:
+        if p.name == "game":
+            p.container_port = 50851 + (p.host_port - 16300)
+    assert ss.docker_port_bindings(s) == {
+        "50851/udp": 16300, "50852/udp": 16301, "27100/tcp": 27100,
+    }
+    env = ss.build_runtime_env(s, None, None)
+    assert env["PORT_game"] == "50851" and "-port 50851" in env["STARTUP_CMD"]
+    assert _public_port("ambulance-straight.tun.ply.gg:50851") == 50851
+    assert _public_port(None) is None and _public_port("host-only") is None
