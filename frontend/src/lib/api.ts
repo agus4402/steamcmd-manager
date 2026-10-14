@@ -25,7 +25,14 @@ import type {
   LoadOrder,
 } from "./types";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
+// NEXT_PUBLIC_* is inlined at build time, so a prebuilt image (GHCR) can't be
+// pointed elsewhere with env vars. Without it, assume the backend is on the same
+// host the panel was opened from, port 8080 (the published compose port).
+const API_BASE =
+  process.env.NEXT_PUBLIC_API_URL ||
+  (typeof window !== "undefined"
+    ? `${window.location.protocol}//${window.location.hostname}:8080`
+    : "http://localhost:8080");
 
 const TOKEN_KEY = "steamcmd_token";
 

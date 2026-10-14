@@ -1,0 +1,99 @@
+# SteamCMD Server Manager — production stack from the GHCR images (NAS).
+#
+#   docker compose -f docker-compose.prod.yml --profile images pull
+#   docker compose -f docker-compose.prod.yml up -d
+#
+# Images are published by .github/workflows/docker-build-push.yml. Pin a version
+# with IMAGE_TAG=0.1.0 (default: latest = last released VERSION).
+#
+# Set in .env at least: ADMIN_PASSWORD, JWT_SECRET, PANEL_SECRET, AGENT_TOKEN,
+# POSTGRES_PASSWORD and FRONTEND_ORIGIN=http://<nas-ip>:3000 (CORS).
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-steam}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-steammanager}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-steam}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - panel
+    restart: unless-stopped
+
+  agent:
+    image: ${IMAGE_PREFIX:-ghcr.io/agus4402/steamcmd-manager}-agent:${IMAGE_TAG:-latest}
+    environment:
+      APP_ENV: production
+      AGENT_TOKEN: ${AGENT_TOKEN:?set AGENT_TOKEN}
+      GAMESERVER_IMAGE: ${IMAGE_PREFIX:-ghcr.io/agus4402/steamcmd-manager}-gameserver:${IMAGE_TAG:-latest}
+      PORT_POOL_START: ${PORT_POOL_START:-27015}
+      PORT_POOL_END: ${PORT_POOL_END:-27200}
+      INSTALL_TIMEOUT: ${INSTALL_TIMEOUT:-3600}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - orchestration
+    restart: unless-stopped
+
+  backend:
+    image: ${IMAGE_PREFIX:-ghcr.io/agus4402/steamcmd-manager}-backend:${IMAGE_TAG:-latest}
+    depends_on:
+      db:
+        condition: service_healthy
+      agent:
+        condition: service_started
+    environment:
+      APP_ENV: production
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-steam}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-steammanager}
+      ADMIN_USER: ${ADMIN_USER:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?set ADMIN_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET}
+      PANEL_SECRET: ${PANEL_SECRET:?set PANEL_SECRET}
+      PORT_POOL_START: ${PORT_POOL_START:-27015}
+      PORT_POOL_END: ${PORT_POOL_END:-27200}
+      AGENT_URL: http://agent:8001
+      AGENT_TOKEN: ${AGENT_TOKEN}
+      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:?set FRONTEND_ORIGIN, e.g. http://192.168.1.10:3000}
+      STEAM_API_KEY: ${STEAM_API_KEY:-}
+    # The frontend calls the backend at <same host>:8080 — keep this port.
+    ports:
+      - "8080:8000"
+    networks:
+      - panel
+      - orchestration
+    restart: unless-stopped
+
+  frontend:
+    image: ${IMAGE_PREFIX:-ghcr.io/agus4402/steamcmd-manager}-frontend:${IMAGE_TAG:-latest}
+    depends_on:
+      - backend
+    ports:
+      - "3000:3000"
+    networks:
+      - panel
+    restart: unless-stopped
+
+  # Never started: only here so `--profile images pull` fetches the game server
+  # base image the agent launches containers from.
+  gameserver:
+    image: ${IMAGE_PREFIX:-ghcr.io/agus4402/steamcmd-manager}-gameserver:${IMAGE_TAG:-latest}
+    profiles: ["images"]
+
+volumes:
+  pgdata:
+
+networks:
+  panel:
+    driver: bridge
+  orchestration:
+    driver: bridge
+    internal: true

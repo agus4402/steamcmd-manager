@@ -1,0 +1,165 @@
+# Publica las imágenes en GHCR y marca las versiones.
+#
+# **El número de versión vive en el repo, en `VERSION`.** Se sube en el mismo
+# cambio que lo justifica; cuando eso llega a `main` este workflow publica esa
+# versión, crea el tag `vX.Y.Z` y el release.
+#
+# Qué sale de cada push a main:
+#
+#     siempre          edge, main-<sha>      la punta, para probar
+#     si VERSION       1.4.2, 1.4, 1         esa versión, y sus alias móviles
+#     es nueva         latest                 la última versión publicada
+#
+# Imágenes: ghcr.io/<owner>/<repo>-{backend,frontend,agent,gameserver}
+#
+# El tag de git se crea **después** de publicar las imágenes: un tag sin sus
+# imágenes es una versión que no se puede desplegar.
+
+name: Publicar imágenes en GHCR
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.read.outputs.version }}
+      major: ${{ steps.read.outputs.major }}
+      minor: ${{ steps.read.outputs.minor }}
+      is_new: ${{ steps.read.outputs.is_new }}
+      image_prefix: ${{ steps.read.outputs.image_prefix }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - id: read
+        run: |
+          set -euo pipefail
+          VERSION="$(tr -d ' \t\n\r' < VERSION)"
+
+          if ! echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error file=VERSION::«$VERSION» no es X.Y.Z"
+            exit 1
+          fi
+
+          MAJOR="${VERSION%%.*}"
+          MINOR="$(echo "$VERSION" | cut -d. -f2)"
+
+          if git rev-parse -q --verify "refs/tags/v$VERSION" >/dev/null; then
+            IS_NEW=false
+            echo "v$VERSION ya existe: se publica solo edge"
+          else
+            IS_NEW=true
+            echo "v$VERSION es nueva: se publica y se taggea"
+          fi
+
+          # GHCR exige minúsculas; github.repository puede traer mayúsculas.
+          PREFIX="$(echo "${{ env.REGISTRY }}/${{ github.repository }}" | tr '[:upper:]' '[:lower:]')"
+
+          {
+            echo "version=$VERSION"
+            echo "major=$MAJOR"
+            echo "minor=$MAJOR.$MINOR"
+            echo "is_new=$IS_NEW"
+            echo "image_prefix=$PREFIX"
+          } >> "$GITHUB_OUTPUT"
+
+  build-and-push:
+    needs: [version]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: backend
+            context: ./backend
+            target: ""
+          - service: frontend
+            context: ./frontend
+            target: runner
+          - service: agent
+            context: ./agent
+            target: ""
+          - service: gameserver
+            context: ./docker/gameserver
+            target: ""
+
+    steps:
+      - uses: actions/checkout@v5
+
+      # Para publicar también arm64 (NAS ARM), agregar setup-qemu-action y
+      # `platforms: linux/amd64,linux/arm64` abajo.
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ needs.version.outputs.image_prefix }}-${{ matrix.service }}
+          tags: |
+            type=raw,value=edge
+            type=sha,prefix=main-,format=short
+            type=raw,value=${{ needs.version.outputs.version }},enable=${{ needs.version.outputs.is_new == 'true' }}
+            type=raw,value=${{ needs.version.outputs.minor }},enable=${{ needs.version.outputs.is_new == 'true' }}
+            type=raw,value=${{ needs.version.outputs.major }},enable=${{ needs.version.outputs.is_new == 'true' }}
+            type=raw,value=latest,enable=${{ needs.version.outputs.is_new == 'true' }}
+          labels: |
+            org.opencontainers.image.version=${{ needs.version.outputs.version }}
+
+      - uses: docker/build-push-action@v7
+        with:
+          context: ${{ matrix.context }}
+          target: ${{ matrix.target }}
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+
+  release:
+    needs: [version, build-and-push]
+    if: ${{ needs.version.outputs.is_new == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Crear el tag y el release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "v$VERSION" -m "v$VERSION"
+          git push origin "v$VERSION"
+          gh release create "v$VERSION" --title "v$VERSION" --generate-notes
