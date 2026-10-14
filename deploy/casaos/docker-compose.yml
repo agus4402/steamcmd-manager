@@ -1,0 +1,128 @@
+# SteamCMD Manager — CasaOS app (App Store → "+" → Install a customized app →
+# Import → pega este archivo).
+#
+# CasaOS no lee .env: reemplazá cada CAMBIAR_* antes de importar.
+#   - NAS_IP: la IP del NAS en tu red (ej. 192.168.1.10).
+#   - Secretos: cualquier string largo y aleatorio (PANEL_SECRET >= 32 chars).
+#     python -c "import secrets;print(secrets.token_urlsafe(32))"
+#
+# El panel abre en http://NAS_IP:3000 y le habla al backend en NAS_IP:8080, así
+# que ese puerto no se puede cambiar. Los datos quedan en
+# /DATA/AppData/steamcmd-manager. Las imágenes de GHCR tienen que ser públicas.
+
+name: steamcmd-manager
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: steamcmd-manager-db
+    environment:
+      POSTGRES_USER: steam
+      POSTGRES_PASSWORD: CAMBIAR_POSTGRES_PASSWORD
+      POSTGRES_DB: steammanager
+    volumes:
+      - type: bind
+        source: /DATA/AppData/steamcmd-manager/postgres
+        target: /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U steam"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - panel
+    restart: unless-stopped
+
+  agent:
+    image: ghcr.io/agus4402/steamcmd-manager-agent:latest
+    container_name: steamcmd-manager-agent
+    environment:
+      APP_ENV: production
+      AGENT_TOKEN: CAMBIAR_AGENT_TOKEN
+      GAMESERVER_IMAGE: ghcr.io/agus4402/steamcmd-manager-gameserver:latest
+      PORT_POOL_START: "27015"
+      PORT_POOL_END: "27200"
+      INSTALL_TIMEOUT: "3600"
+    volumes:
+      - type: bind
+        source: /var/run/docker.sock
+        target: /var/run/docker.sock
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - orchestration
+    restart: unless-stopped
+
+  backend:
+    image: ghcr.io/agus4402/steamcmd-manager-backend:latest
+    container_name: steamcmd-manager-backend
+    depends_on:
+      db:
+        condition: service_healthy
+      agent:
+        condition: service_started
+    environment:
+      APP_ENV: production
+      DATABASE_URL: postgresql+asyncpg://steam:CAMBIAR_POSTGRES_PASSWORD@db:5432/steammanager
+      ADMIN_USER: admin
+      ADMIN_PASSWORD: CAMBIAR_ADMIN_PASSWORD
+      JWT_SECRET: CAMBIAR_JWT_SECRET
+      PANEL_SECRET: CAMBIAR_PANEL_SECRET
+      PORT_POOL_START: "27015"
+      PORT_POOL_END: "27200"
+      AGENT_URL: http://agent:8001
+      AGENT_TOKEN: CAMBIAR_AGENT_TOKEN
+      FRONTEND_ORIGIN: http://CAMBIAR_NAS_IP:3000
+      STEAM_API_KEY: ""
+    ports:
+      - target: 8000
+        published: "8080"
+        protocol: tcp
+    networks:
+      - panel
+      - orchestration
+    restart: unless-stopped
+
+  frontend:
+    image: ghcr.io/agus4402/steamcmd-manager-frontend:latest
+    container_name: steamcmd-manager-frontend
+    depends_on:
+      - backend
+    ports:
+      - target: 3000
+        published: "3000"
+        protocol: tcp
+    networks:
+      - panel
+    restart: unless-stopped
+    x-casaos:
+      ports:
+        - container: "3000"
+          description:
+            en_us: Web panel
+
+networks:
+  panel:
+    driver: bridge
+  # Backend <-> agent only; the agent (Docker socket) is never exposed.
+  orchestration:
+    driver: bridge
+    internal: true
+
+x-casaos:
+  architectures:
+    - amd64
+  main: frontend
+  author: agus4402
+  developer: agus4402
+  category: Gaming
+  icon: https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/steam.png
+  tagline:
+    en_us: Self-hosted SteamCMD game server panel
+  description:
+    en_us: Install and manage SteamCMD dedicated game servers (Project Zomboid, Valheim, 7 Days to Die...) from a web panel.
+  title:
+    en_us: SteamCMD Manager
+  port_map: "3000"
+  scheme: http
+  index: /
