@@ -55,6 +55,10 @@ def _sem() -> asyncio.Semaphore:
     return _download_sem
 
 
+class IsCollection(RuntimeError):
+    """The item is a Workshop collection: import its members instead."""
+
+
 class WorkshopError(RuntimeError):
     """Domain error the API layer turns into a 4xx."""
 
@@ -261,6 +265,11 @@ async def add_mod(
     item_id = parse_item_id(raw_item)
     if item_id in await _existing_item_ids(session, server.id):
         raise WorkshopError("that workshop item is already added")
+    try:
+        if await _provider().resolve_collection(item_id):
+            raise IsCollection(item_id)
+    except WorkshopProviderError:
+        pass  # can't tell: treat it as a plain item
     return await _create_mod(session, server, item_id, name=name)
 
 
@@ -273,14 +282,19 @@ async def import_preview(server: Server, raw: str) -> tuple[list[dict], list[str
     if not ids:
         return [], unparsed
 
-    # A single id may be a collection: expand it into its members.
-    if len(ids) == 1:
-        try:
-            members = await _provider().resolve_collection(ids[0])
-        except WorkshopProviderError:
-            members = []
-        if members:
-            ids = members
+    # Any id may be a collection (alone or mixed with items): expand each one in
+    # place into its members, keeping the order and dropping repeats.
+    try:
+        collections = await _provider().resolve_collections(ids)
+    except WorkshopProviderError:
+        collections = {}
+    if collections:
+        expanded: list[str] = []
+        for iid in ids:
+            for member in collections.get(iid, [iid]):
+                if member not in expanded:
+                    expanded.append(member)
+        ids = expanded
 
     # Detect duplicates already filtered by parse_many; here flag installed ones.
     async with SessionLocal() as session:
@@ -409,6 +423,17 @@ async def _finish(mod_id: str, code: int, logs: str) -> None:
             mod.status = "error"
             mod.error_message = (logs or "download failed").strip()[-500:]
         await session.commit()
+        if code == 0:
+            # Discover the game-level mods inside (per-mod toggles + load order).
+            from app.services import load_order_service  # late import avoids a cycle
+
+            server = await session.get(Server, mod.server_id)
+            if server is not None and load_order_service.inspector_for(server):
+                try:
+                    await load_order_service.inspect_mod(session, server, mod)
+                except DockerError as exc:
+                    await session.rollback()
+                    logger.warning("could not inspect %s: %s", mod.item_id, exc)
 
 
 # -- updates ------------------------------------------------------------------

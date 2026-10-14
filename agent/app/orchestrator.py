@@ -356,15 +356,27 @@ class DockerOrchestrator:
     # game's user (uid 1000) so they can only touch what the game itself owns,
     # and anything they create stays writable by the game.
 
-    def list_files(self, server_id: str, path: str, depth: int) -> list[FileEntry]:
+    def list_files(
+        self,
+        server_id: str,
+        path: str,
+        depth: int,
+        kind: str | None = None,
+        name: str | None = None,
+    ) -> list[FileEntry]:
+        """Entries under `path` up to `depth` levels. `kind` ("file"|"dir") and
+        `name` (a find -name glob, pre-validated) narrow deep scans, e.g. finding
+        every mod.info in a workshop item without listing all of its assets."""
         target = f"/data/{path}".rstrip("/")
+        types = {"file": "-type f", "dir": "-type d"}.get(kind or "", "\\( -type f -o -type d \\)")
+        name_filter = f"-name '{name}' " if name else ""
         out = self._run_helper(
             [
                 "sh",
                 "-c",
                 f"[ -d '{target}' ] || exit 0; "
-                f"find '{target}' -mindepth 1 -maxdepth {int(depth)} "
-                "\\( -type f -o -type d \\) -exec stat -c '%F|%s|%Y|%n' {} +",
+                f"find '{target}' -mindepth 1 -maxdepth {int(depth)} {types} {name_filter}"
+                "-exec stat -c '%F|%s|%Y|%n' {} +",
             ],
             {self.data_volume(server_id): {"bind": "/data", "mode": "ro"}},
             user=GAME_USER,

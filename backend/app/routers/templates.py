@@ -26,6 +26,9 @@ async def list_templates() -> list[TemplateOut]:
             update_on_start=t.update_on_start,
             branches=t.branches,
             workshop_note=t.workshop.note if t.workshop else None,
+            config_files=[
+                {"path": f.path, "label": f.label, "format": f.format} for f in t.config_files
+            ],
         )
         for t in get_templates().values()
     ]

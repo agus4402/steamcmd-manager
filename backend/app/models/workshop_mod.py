@@ -76,6 +76,9 @@ class WorkshopMod(Base):
     # Dependency tracking: auto-added deps and the item that required them.
     is_dependency: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     required_by: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    # Steam branch the item's files were last inspected for (sub-mods discovered);
+    # NULL = not inspected yet. "public" stands for the default branch.
+    inspected_branch: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(

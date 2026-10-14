@@ -17,6 +17,8 @@ import { SaveBar } from "./SaveBar";
 import { useConfigSave } from "./useConfigSave";
 
 const ALL = "__all__";
+/** Every section added by a mod (deep-linked from the Workshop load order). */
+const MODS = "__mods__";
 const selectCls =
   "h-9 rounded-md border border-border bg-background px-2 text-sm outline-none focus:border-primary";
 
@@ -67,7 +69,7 @@ export function StructuredEditor({
     const q = query.trim().toLowerCase();
     return fields.filter(
       (f) =>
-        (section === ALL || f.section === section) &&
+        (section === ALL || (section === MODS ? f.mod : f.section === section)) &&
         (!q ||
           f.path.toLowerCase().includes(q) ||
           (f.description ?? "").toLowerCase().includes(q) ||
@@ -143,6 +145,7 @@ export function StructuredEditor({
             aria-label="Section"
           >
             <option value={ALL}>All sections</option>
+            {sections.some((s) => s.mod) && <option value={MODS}>All mod sections</option>}
             {sections.map((s) => (
               <option key={s.name} value={s.name}>
                 {s.name}
@@ -157,7 +160,14 @@ export function StructuredEditor({
       </div>
 
       {visible.length === 0 ? (
-        <EmptyState title="No settings match" hint="Try another search or section." />
+        <EmptyState
+          title={section === MODS && !query ? "No mod options" : "No settings match"}
+          hint={
+            section === MODS && !query
+              ? "None of the installed mods add sandbox options (they appear here after the server starts with them)."
+              : "Try another search or section."
+          }
+        />
       ) : (
         [...grouped.entries()].map(([name, list]) => (
           <section key={name} className="rounded-lg border border-border">

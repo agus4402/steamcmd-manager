@@ -37,9 +37,7 @@ _CLOSE_RE = re.compile(r"^\s*\}\s*,?\s*$")
 _OPTION_RE = re.compile(r"^(\s*)([A-Za-z_][A-Za-z0-9_]*)(\s*=\s*)(.+?)(\s*,?\s*)$")
 _ENUM_RE = re.compile(r"^(-?\d+)\s*=\s*(.+)$")
 _DEFAULT_LABEL_RE = re.compile(r"\s*Default\s*=\s*(.+)$")
-_RANGE_RE = re.compile(
-    r"\s*Min:\s*(-?[\d.]+)\s+Max:\s*(-?[\d.]+)(?:\s+Default:\s*(-?[\d.]+))?\s*$"
-)
+_RANGE_RE = re.compile(r"\s*Min:\s*(-?[\d.]+)\s+Max:\s*(-?[\d.]+)(?:\s+Default:\s*(-?[\d.]+))?\s*$")
 
 
 def _split_lines(text: str) -> tuple[list[str], str]:

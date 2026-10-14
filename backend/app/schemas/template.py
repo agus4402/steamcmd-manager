@@ -78,6 +78,16 @@ class WorkshopSpec(BaseModel):
     # Shown in the Workshop tab: how downloaded mods get enabled in this game
     # (automatically by a prestart hook, or what the user must edit by hand).
     note: str | None = None
+    # Game-specific inspector that discovers the mods inside each downloaded item
+    # (enables per-mod-id toggles + load order), e.g. "project_zomboid".
+    inspector: str | None = None
+
+    @field_validator("inspector")
+    @classmethod
+    def _valid_inspector(cls, v: str | None) -> str | None:
+        if v is not None and not TOKEN_RE.match(v):
+            raise ValueError(f"workshop inspector '{v}' must match [A-Za-z0-9_]+")
+        return v
 
     @field_validator("install_path")
     @classmethod

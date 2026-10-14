@@ -286,10 +286,20 @@ class DockerOrchestrator:
 
     # -- data-volume files (config editor) -------------------------------------
 
-    def list_files(self, server_id: str, path: str, depth: int = 1) -> list[FileEntry]:
-        resp = self._request(
-            "GET", f"/servers/{server_id}/files", params={"path": path, "depth": depth}
-        )
+    def list_files(
+        self,
+        server_id: str,
+        path: str,
+        depth: int = 1,
+        kind: str | None = None,
+        name: str | None = None,
+    ) -> list[FileEntry]:
+        params: dict[str, str | int] = {"path": path, "depth": depth}
+        if kind:
+            params["kind"] = kind
+        if name:
+            params["name"] = name
+        resp = self._request("GET", f"/servers/{server_id}/files", params=params)
         return [FileEntry(**e) for e in resp.json()]
 
     def read_file(self, server_id: str, path: str) -> tuple[bytes, int] | None:

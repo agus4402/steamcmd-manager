@@ -13,6 +13,7 @@ from __future__ import annotations
 import re
 import secrets
 from dataclasses import asdict
+from typing import Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Path, Request, Response, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -54,6 +55,8 @@ WORKSHOP_PATH_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_./-]*$")
 # backslash or control chars (paths are single-quoted in helper shell commands).
 # Spaces/brackets are allowed — PZ mod folders use them.
 FILE_PATH_RE = re.compile(r"^[^'\\\x00-\x1f/][^'\\\x00-\x1f]{0,511}$")
+# find -name glob for narrowing deep listings (e.g. "mod.info").
+FIND_NAME_RE = re.compile(r"^[A-Za-z0-9_.*-]{1,64}$")
 # One printable console line (no newlines/control chars), e.g. "quit".
 STOP_COMMAND_RE = re.compile(r"^[ -~]{1,128}$")
 
@@ -341,12 +344,18 @@ def valid_file_path(path: str) -> str:
 
 @app.get("/servers/{server_id}/files", dependencies=authed, response_model=list[FileEntryResponse])
 async def list_files(
-    path: str, depth: int = 1, server_id: str = Depends(valid_server_id)
+    path: str,
+    depth: int = 1,
+    kind: Literal["file", "dir"] | None = None,
+    name: str | None = None,
+    server_id: str = Depends(valid_server_id),
 ) -> list[FileEntryResponse]:
     path = valid_file_path(path)
+    if name is not None and not FIND_NAME_RE.match(name):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid name filter")
     try:
         entries = await run_in_threadpool(
-            orchestrator.list_files, server_id, path, max(1, min(depth, 4))
+            orchestrator.list_files, server_id, path, max(1, min(depth, 6)), kind, name
         )
     except DockerError as exc:
         raise _wrap(exc) from exc

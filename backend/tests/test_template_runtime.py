@@ -10,6 +10,7 @@ from app.models.server import Server
 from app.schemas.server import ServerUpdate
 from app.schemas.template import GameTemplate, VarSpec
 from app.services import server_service as ss
+from app.services.load_order_service import WorkshopRuntime
 from app.services.template_loader import get_template
 
 
@@ -96,7 +97,9 @@ def _pz_server(**extra) -> Server:
 
 
 def test_runtime_env_exposes_ports_hook_and_mods():
-    env = ss.build_runtime_env(_pz_server(), None, ["111", "222"])
+    env = ss.build_runtime_env(
+        _pz_server(), None, WorkshopRuntime(items=["111", "222"], mod_ids=None, maps=None)
+    )
     assert env["PORT_game"] == "16300" and env["PORT_rcon"] == "27100"
     assert env["PRESTART_HOOK"] == "project_zomboid"
     assert env["WORKSHOP_ITEMS"] == "111;222"

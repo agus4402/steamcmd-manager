@@ -15,14 +15,19 @@ from app.schemas.workshop import (
     ImportPreviewItem,
     ImportRequest,
     ImportResult,
+    LoadOrderEntryOut,
+    LoadOrderOut,
+    LoadOrderUpdate,
     ModDetailsOut,
     ModSummaryOut,
     SearchResultOut,
+    SubmodToggle,
     SyncResult,
     WorkshopModCreate,
     WorkshopModOut,
 )
-from app.services import scheduler_service, server_service, workshop_service
+from app.services import load_order_service, scheduler_service, server_service, workshop_service
+from app.services.docker_orchestrator import DockerError
 from app.workshop.base import ModDetails, ModSummary
 
 router = APIRouter(prefix="/api/servers", tags=["workshop"])
@@ -93,6 +98,11 @@ async def add_mod(
     server = await _server_or_404(db, server_id)
     try:
         return await workshop_service.add_mod(db, server, payload.item, payload.name)
+    except workshop_service.IsCollection as exc:
+        # The UI catches this and opens the import preview with the collection.
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, f"collection:{exc.args[0]} is a Workshop collection"
+        ) from exc
     except workshop_service.WorkshopError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
 
@@ -183,6 +193,67 @@ async def remove_mod(server_id: str, mod_id: str, db: AsyncSession = Depends(get
         await workshop_service.remove_mod(db, server, mod)
     except workshop_service.WorkshopError as exc:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
+
+
+# -- sub-mods / load order ---------------------------------------------------------
+
+
+def _entries(entries: list[load_order_service.LoadOrderEntry]) -> list[LoadOrderEntryOut]:
+    return [LoadOrderEntryOut.model_validate(e, from_attributes=True) for e in entries]
+
+
+@router.get("/{server_id}/mods/load-order", response_model=LoadOrderOut)
+async def get_load_order(server_id: str, db: AsyncSession = Depends(get_db)) -> LoadOrderOut:
+    server = await _server_or_404(db, server_id)
+    if load_order_service.inspector_for(server) is None:
+        return LoadOrderOut(supported=False)
+    try:
+        entries = await load_order_service.load_order(db, server)
+    except DockerError as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
+    return LoadOrderOut(supported=True, entries=_entries(entries))
+
+
+@router.put("/{server_id}/mods/load-order", response_model=LoadOrderOut)
+async def put_load_order(
+    server_id: str, payload: LoadOrderUpdate, db: AsyncSession = Depends(get_db)
+) -> LoadOrderOut:
+    server = await _server_or_404(db, server_id)
+    try:
+        entries = await load_order_service.set_load_order(
+            db, server, [(i.id, i.enabled) for i in payload.order]
+        )
+    except load_order_service.LoadOrderError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    return LoadOrderOut(supported=True, entries=_entries(entries))
+
+
+@router.patch("/{server_id}/mods/submods/{submod_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def toggle_submod(
+    server_id: str, submod_id: str, payload: SubmodToggle, db: AsyncSession = Depends(get_db)
+) -> None:
+    server = await _server_or_404(db, server_id)
+    try:
+        await load_order_service.set_enabled(db, server, submod_id, payload.enabled)
+    except load_order_service.LoadOrderError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+
+
+@router.post("/{server_id}/mods/{mod_id}/inspect", response_model=LoadOrderOut)
+async def inspect_mod(
+    server_id: str, mod_id: str, db: AsyncSession = Depends(get_db)
+) -> LoadOrderOut:
+    """Re-scan one item's files for its mods (e.g. after editing them by hand)."""
+    server = await _server_or_404(db, server_id)
+    mod = await _mod_or_404(db, server_id, mod_id)
+    if load_order_service.inspector_for(server) is None:
+        return LoadOrderOut(supported=False)
+    try:
+        await load_order_service.inspect_mod(db, server, mod)
+        entries = await load_order_service.load_order(db, server)
+    except DockerError as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
+    return LoadOrderOut(supported=True, entries=_entries(entries))
 
 
 # -- provider catalog (server-independent) ------------------------------------

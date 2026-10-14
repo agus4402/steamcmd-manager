@@ -163,6 +163,7 @@ export interface Template {
   branches: string[];
   /** How downloaded Workshop mods get enabled for this game. */
   workshop_note: string | null;
+  config_files: { path: string; label: string; format: ConfigFormat }[];
 }
 
 export interface SteamCredentials {
@@ -329,4 +330,26 @@ export interface ConfigWriteResult {
   path: string;
   mtime: number;
   restarted: boolean;
+}
+
+// -- workshop sub-mods / load order ---------------------------------------------
+
+export interface LoadOrderEntry {
+  id: string;
+  mod_id: string;
+  name: string | null;
+  enabled: boolean;
+  load_order: number;
+  item_id: string;
+  item_title: string | null;
+  workshop_mod_id: string;
+  requires: string[];
+  maps: string[];
+  warnings: string[];
+}
+
+export interface LoadOrder {
+  /** False when the game can't toggle mods individually (no inspector). */
+  supported: boolean;
+  entries: LoadOrderEntry[];
 }

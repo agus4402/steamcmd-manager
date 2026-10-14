@@ -78,12 +78,15 @@ config_dirs:
   - Zomboid/Server
   - Zomboid/Lua
 # Steam Workshop: PZ's workshop content lives under the CLIENT app 108600 (not the
-# dedicated-server app 380870). Installed items are enabled automatically on the
-# next start (the prestart hook fills WorkshopItems=/Mods=/Map= from them).
+# dedicated-server app 380870). The prestart hook fills WorkshopItems=/Mods=/Map=
+# from the enabled mods, in the load order set in the Workshop tab.
 workshop:
   app_id: 108600
   install_path: "steamapps/workshop/content/108600"
+  # Discovers the mod ids inside each item (mod.info) → per-mod toggles and load
+  # order in the Workshop tab; the hook writes them to Mods=/Map= in that order.
+  inspector: project_zomboid
   note: >
-    Installed mods are enabled automatically on the next start or restart
-    (WorkshopItems, Mods and Map in pzserver.ini are managed by the panel).
+    Enabled mods are applied on the next start or restart, in the order set in
+    Load order (WorkshopItems, Mods and Map in pzserver.ini are managed by the panel).
 update_on_start: true

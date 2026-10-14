@@ -77,7 +77,10 @@ def test_sandbox_apply_only_changed_lines_and_quotes_strings():
 
 
 def test_sandbox_mod_tables_flagged():
-    text = SANDBOX.rstrip().rstrip("}") + "    BetterLockpicking = {\n        Chance = 30,\n    },\n}\n"
+    text = (
+        SANDBOX.rstrip().rstrip("}")
+        + "    BetterLockpicking = {\n        Chance = 30,\n    },\n}\n"
+    )
     f = next(f for f in pz_sandbox.parse(text) if f.path == "BetterLockpicking.Chance")
     assert f.mod and f.section == "BetterLockpicking"
 
@@ -92,8 +95,15 @@ def test_sandbox_unknown_path_rejected():
 
 @pytest.mark.parametrize(
     ("ftype", "value", "ok"),
-    [("bool", "true", True), ("bool", "yes", False), ("int", "5", True), ("int", "5.5", False),
-     ("float", "2", True), ("float", "abc", False), ("string", "a\nb", False)],
+    [
+        ("bool", "true", True),
+        ("bool", "yes", False),
+        ("int", "5", True),
+        ("int", "5.5", False),
+        ("float", "2", True),
+        ("float", "abc", False),
+        ("string", "a\nb", False),
+    ],
 )
 def test_validate_value_types(ftype, value, ok):
     f = ConfigField(path="x", section="s", value="", type=ftype)
@@ -118,6 +128,12 @@ def test_whitelist():
     t = get_template("project_zomboid")
     assert config_service.check_allowed(t, "Zomboid/Server/pzserver.ini").format == "ini"
     assert config_service.check_allowed(t, "Zomboid/Lua/SomeMod/config.ini") is None
-    for bad in ["../x", "/etc/passwd", "Zomboid/db/pzserver.db", "Zomboid/Lua/../db/x", "Zomboid/Lua//x"]:
+    for bad in [
+        "../x",
+        "/etc/passwd",
+        "Zomboid/db/pzserver.db",
+        "Zomboid/Lua/../db/x",
+        "Zomboid/Lua//x",
+    ]:
         with pytest.raises(config_service.NotAllowed):
             config_service.check_allowed(t, bad)

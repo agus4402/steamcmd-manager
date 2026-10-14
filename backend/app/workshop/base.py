@@ -115,3 +115,13 @@ class WorkshopProvider(ABC):
     @abstractmethod
     async def resolve_collection(self, collection_id: str) -> list[str]:
         """Return the member item ids of a collection (empty if not a collection)."""
+
+    async def resolve_collections(self, ids: list[str]) -> dict[str, list[str]]:
+        """Members of each id that is a collection (ids that aren't are omitted).
+        Providers with a batch API should override this."""
+        out: dict[str, list[str]] = {}
+        for cid in ids:
+            members = await self.resolve_collection(cid)
+            if members:
+                out[cid] = members
+        return out

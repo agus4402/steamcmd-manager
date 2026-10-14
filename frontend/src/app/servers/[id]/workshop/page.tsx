@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import useSWR from "swr";
 import { toast } from "sonner";
 import {
@@ -17,7 +17,13 @@ import {
   Info,
 } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
-import { WORKSHOP_INFLIGHT, type Template, type WorkshopMod } from "@/lib/types";
+import {
+  WORKSHOP_INFLIGHT,
+  type LoadOrder,
+  type LoadOrderEntry,
+  type Template,
+  type WorkshopMod,
+} from "@/lib/types";
 import { formatCount, timeAgo } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input, Label } from "@/components/ui/input";
@@ -28,6 +34,7 @@ import { ModStatusBadge } from "@/components/workshop/ModStatusBadge";
 import { ModDetailsDrawer } from "@/components/workshop/ModDetailsDrawer";
 import { ImportModsModal } from "@/components/workshop/ImportModsModal";
 import { WorkshopBrowse } from "@/components/workshop/WorkshopBrowse";
+import { LoadOrderList } from "@/components/workshop/LoadOrderList";
 import { cn } from "@/lib/utils";
 import { useServerCtx } from "../server-context";
 
@@ -43,9 +50,24 @@ export default function ServerWorkshopPage() {
   );
 
   const { data: templates } = useSWR<Template[]>("templates", () => api.templates());
-  const workshopNote = templates?.find((t) => t.id === server.template_id)?.workshop_note;
+  const template = templates?.find((t) => t.id === server.template_id);
+  const workshopNote = template?.workshop_note;
+  const sandboxPath = template?.config_files.find((f) => f.format === "pz_sandbox")?.path ?? null;
 
-  const [tab, setTab] = useState<"installed" | "browse">("installed");
+  // Mods inside each item (toggles + load order); refreshed whenever the item
+  // list settles, since a finished download adds its mods.
+  const { data: loadOrder, mutate: mutateLoadOrder } = useSWR<LoadOrder>(
+    ["load-order", server.id],
+    () => api.loadOrder(server.id),
+    { revalidateOnFocus: false },
+  );
+  const modsSignature = (data ?? []).map((m) => `${m.id}:${m.status}`).join(",");
+  useEffect(() => {
+    void mutateLoadOrder();
+  }, [modsSignature, mutateLoadOrder]);
+
+  const [tab, setTab] = useState<"installed" | "order" | "browse">("installed");
+  const [importInput, setImportInput] = useState<string | undefined>(undefined);
   const [item, setItem] = useState("");
   const [adding, setAdding] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -128,11 +150,29 @@ export default function ServerWorkshopPage() {
       setItem("");
       await mutate();
     } catch (e) {
+      if (e instanceof ApiError && e.status === 409 && e.message.startsWith("collection:")) {
+        // A collection: preview its members in the import dialog instead.
+        setImportInput(item.trim());
+        setImportOpen(true);
+        setItem("");
+        return;
+      }
       toast.error("Could not add mod", {
         description: e instanceof ApiError ? e.message : String(e),
       });
     } finally {
       setAdding(false);
+    }
+  }
+
+  async function toggleSubmod(entry: LoadOrderEntry, enabled: boolean) {
+    try {
+      await api.toggleSubmod(server.id, entry.id, enabled);
+      await mutateLoadOrder();
+    } catch (e) {
+      toast.error("Could not change the mod", {
+        description: e instanceof ApiError ? e.message : String(e),
+      });
     }
   }
 
@@ -209,7 +249,10 @@ export default function ServerWorkshopPage() {
 
       {/* Sub-tabs */}
       <div className="flex gap-1 border-b border-border">
-        {(["installed", "browse"] as const).map((t) => (
+        {(loadOrder?.supported
+          ? (["installed", "order", "browse"] as const)
+          : (["installed", "browse"] as const)
+        ).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -220,12 +263,23 @@ export default function ServerWorkshopPage() {
                 : "border-transparent text-muted-foreground hover:text-foreground",
             )}
           >
-            {t === "installed" ? `Installed${mods.length ? ` (${mods.length})` : ""}` : "Browse"}
+            {t === "installed"
+              ? `Installed${mods.length ? ` (${mods.length})` : ""}`
+              : t === "order"
+                ? "Load order"
+                : "Browse"}
           </button>
         ))}
       </div>
 
-      {tab === "browse" ? (
+      {tab === "order" && loadOrder?.supported ? (
+        <LoadOrderList
+          serverId={server.id}
+          entries={loadOrder.entries}
+          sandboxPath={sandboxPath}
+          onSaved={() => mutateLoadOrder()}
+        />
+      ) : tab === "browse" ? (
         <WorkshopBrowse
           gameId={server.workshop_app_id as number}
           installedIds={installedIds}
@@ -257,8 +311,9 @@ export default function ServerWorkshopPage() {
             </Button>
           </div>
           <p className="text-xs text-muted-foreground">
-            Add a single item, or use Import for a collection or a list of IDs. Mods download via
-            SteamCMD into the server&apos;s data and apply on next start.
+            Add an item or paste a collection URL (it opens the import preview), or use Import for
+            a list of IDs. Mods download via SteamCMD into the server&apos;s data and apply on next
+            start.
           </p>
         </CardContent>
       </Card>
@@ -337,12 +392,18 @@ export default function ServerWorkshopPage() {
         onUpdate={update}
         onRemove={remove}
         onOpenItem={setDetailItemId}
+        submods={loadOrder?.entries.filter((e) => e.workshop_mod_id === detailMod?.id)}
+        onToggleSubmod={loadOrder?.supported ? toggleSubmod : undefined}
       />
 
       {importOpen && (
         <ImportModsModal
           serverId={server.id}
-          onClose={() => setImportOpen(false)}
+          initialInput={importInput}
+          onClose={() => {
+            setImportOpen(false);
+            setImportInput(undefined);
+          }}
           onInstalled={() => mutate()}
         />
       )}

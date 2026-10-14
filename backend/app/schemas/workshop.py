@@ -124,3 +124,40 @@ class SyncResult(BaseModel):
     restored: int
     missing: int
     on_disk: int
+
+
+# -- sub-mods / load order ------------------------------------------------------
+
+
+class LoadOrderEntryOut(BaseModel):
+    id: str
+    mod_id: str
+    name: str | None = None
+    enabled: bool
+    load_order: int
+    item_id: str
+    item_title: str | None = None
+    workshop_mod_id: str
+    requires: list[str] = Field(default_factory=list)
+    maps: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class LoadOrderOut(BaseModel):
+    # False when the game has no inspector (mods can't be toggled individually).
+    supported: bool
+    entries: list[LoadOrderEntryOut] = Field(default_factory=list)
+
+
+class LoadOrderItem(BaseModel):
+    id: str
+    enabled: bool
+
+
+class LoadOrderUpdate(BaseModel):
+    # Every sub-mod of the server, in the desired load order.
+    order: list[LoadOrderItem] = Field(max_length=2000)
+
+
+class SubmodToggle(BaseModel):
+    enabled: bool

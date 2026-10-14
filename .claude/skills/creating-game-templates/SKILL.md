@@ -90,6 +90,7 @@ WorkshopSpec (the optional `workshop` map):
 | `app_id` | int ≥1 | — | Steam app whose **workshop content** is downloaded. Often the **client** game App ID, which differs from the dedicated-server `app_id` (e.g. Project Zomboid: server `380870`, workshop `108600`). |
 | `install_path` | str | `steamapps/workshop` | Where items land inside the data dir, as `install_path/<item_id>`. Must be a **safe relative path** (no leading `/`, no `..`). |
 | `note` | str\|null | `null` | Shown at the top of the Workshop tab: how downloaded mods get enabled in this game. |
+| `inspector` | str\|null | `null` | Game-specific discovery of the mods *inside* each downloaded item (e.g. `project_zomboid` reads `mod.info`). Enables the Workshop **Load order** tab: per-mod-id toggles + ordering, passed to the prestart hook as `WORKSHOP_MOD_IDS`/`WORKSHOP_MAPS`. Implementations live in `backend/app/workshop/inspectors/`. |
 
 ## Placeholder rules
 

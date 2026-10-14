@@ -13,6 +13,7 @@ from app.models.scheduled_action import ScheduledAction
 from app.models.server import Server, ServerStatus
 from app.models.user import User
 from app.models.workshop_mod import WorkshopMod
+from app.models.workshop_submod import WorkshopSubmod
 
 __all__ = [
     "Integration",
@@ -27,4 +28,5 @@ __all__ = [
     "TunnelStatus",
     "User",
     "WorkshopMod",
+    "WorkshopSubmod",
 ]

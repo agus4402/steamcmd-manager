@@ -81,6 +81,8 @@ class TemplateOut(BaseModel):
     update_on_start: bool
     branches: list[str] = []
     workshop_note: str | None = None
+    # Declared config files (Config tab), e.g. to deep-link a mod's sandbox options.
+    config_files: list[dict[str, str]] = []
 
 
 class SteamCredentials(BaseModel):

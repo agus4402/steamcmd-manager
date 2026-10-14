@@ -3,11 +3,12 @@
 import useSWR from "swr";
 import { Users, Star, Clock, Download, Trash2, ArrowUpCircle, ExternalLink } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
-import type { WorkshopMod } from "@/lib/types";
+import type { LoadOrderEntry, WorkshopMod } from "@/lib/types";
 import { formatBytes, formatCount, timeAgo } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Drawer } from "@/components/ui/drawer";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Switch } from "@/components/ui/switch";
 import { ErrorState } from "@/components/common/states";
 
 const STEAM_ITEM_URL = "https://steamcommunity.com/sharedfiles/filedetails/?id=";
@@ -21,6 +22,9 @@ interface Props {
   onUpdate: (mod: WorkshopMod) => void;
   onRemove: (mod: WorkshopMod) => void;
   onOpenItem: (itemId: string) => void;
+  /** Game-level mods found inside this item (when the game supports toggling them). */
+  submods?: LoadOrderEntry[];
+  onToggleSubmod?: (entry: LoadOrderEntry, enabled: boolean) => void;
 }
 
 export function ModDetailsDrawer({
@@ -32,6 +36,8 @@ export function ModDetailsDrawer({
   onUpdate,
   onRemove,
   onOpenItem,
+  submods,
+  onToggleSubmod,
 }: Props) {
   const { data, error, isLoading } = useSWR(
     itemId ? ["mod-details", itemId] : null,
@@ -84,6 +90,31 @@ export function ModDetailsDrawer({
             <p className="whitespace-pre-wrap text-sm text-muted-foreground line-clamp-[12]">
               {data.description}
             </p>
+          )}
+
+          {installedMod && submods && submods.length > 0 && (
+            <div>
+              <h3 className="mb-2 text-sm font-medium">Mods in this item ({submods.length})</h3>
+              <ul className="flex flex-col divide-y divide-border rounded-md border border-border">
+                {submods.map((s) => (
+                  <li key={s.id} className="flex items-center gap-3 px-3 py-2">
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate font-mono text-xs font-medium">{s.mod_id}</p>
+                      {s.name && <p className="truncate text-xs text-muted-foreground">{s.name}</p>}
+                    </div>
+                    <Switch
+                      checked={s.enabled}
+                      disabled={busy || !onToggleSubmod}
+                      onCheckedChange={(c) => onToggleSubmod?.(s, c)}
+                      aria-label={`Enable ${s.mod_id}`}
+                    />
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-1.5 text-xs text-muted-foreground">
+                Toggle optional parts; the order is set in Load order.
+              </p>
+            </div>
           )}
 
           {data.dependencies.length > 0 && (

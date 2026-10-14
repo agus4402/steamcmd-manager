@@ -22,7 +22,8 @@ from app.db import SessionLocal
 from app.models.server import Server, ServerStatus
 from app.schemas.server import ServerCreate
 from app.schemas.template import PLACEHOLDER_RE, GameTemplate, render_startup
-from app.services import notification_service
+from app.services import load_order_service, notification_service
+from app.services.load_order_service import WorkshopRuntime
 from app.services.crypto import decrypt_credentials, encrypt_credentials
 from app.services.docker_orchestrator import DEFAULT_STOP_TIMEOUT, DockerError, orchestrator
 from app.services.port_manager import allocate_ports
@@ -295,7 +296,7 @@ def build_install_env(server: Server, creds: dict[str, str] | None = None) -> di
 def build_runtime_env(
     server: Server,
     creds: dict[str, str] | None = None,
-    workshop_items: list[str] | None = None,
+    workshop: WorkshopRuntime | None = None,
 ) -> dict[str, str]:
     # The long-lived server container NEVER runs steamcmd: installs/updates always
     # happen in a separate one-shot container (so progress shows as installing/
@@ -317,27 +318,15 @@ def build_runtime_env(
         env[key] = str(value)
     if template.prestart_hook:
         env["PRESTART_HOOK"] = template.prestart_hook
-    if workshop_items is not None:
-        # Load order: dependencies first, then in the order they were added.
-        env["WORKSHOP_ITEMS"] = ";".join(workshop_items)
+    if workshop is not None:
+        env["WORKSHOP_ITEMS"] = ";".join(workshop.items)
+        if workshop.mod_ids is not None:
+            # Enabled mod ids in the user's load order (+ their maps); without
+            # them the prestart hook falls back to auto-detecting every mod.
+            env["WORKSHOP_MOD_IDS"] = ";".join(workshop.mod_ids)
+            env["WORKSHOP_MAPS"] = ";".join(workshop.maps or [])
     return env
 
-
-async def _workshop_items(session: AsyncSession, server: Server) -> list[str] | None:
-    """Workshop item ids to enable on start (None if the game has no workshop)."""
-    if server.workshop_app_id is None:
-        return None
-    from app.models.workshop_mod import WorkshopMod  # late import avoids a cycle
-
-    rows = await session.scalars(
-        select(WorkshopMod.item_id)
-        .where(
-            WorkshopMod.server_id == server.id,
-            WorkshopMod.status.not_in(("error", "missing_dependency")),
-        )
-        .order_by(WorkshopMod.is_dependency.desc(), WorkshopMod.created_at)
-    )
-    return list(rows)
 
 
 # -- install progress ---------------------------------------------------------
@@ -566,7 +555,7 @@ async def _do_start(
     session: AsyncSession, server: Server, creds: dict[str, str] | None
 ) -> None:
     """Create + start the long-lived server container (no steamcmd here)."""
-    env = build_runtime_env(server, creds, await _workshop_items(session, server))
+    env = build_runtime_env(server, creds, await load_order_service.runtime(session, server))
     bindings = docker_port_bindings(server)
     container_id = await run_in_threadpool(
         orchestrator.create_server_container, server.id, env, bindings

@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Loader2, Upload, FileSearch } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
@@ -10,18 +10,26 @@ import { Button } from "@/components/ui/button";
 
 interface Props {
   serverId: string;
+  /** Pre-filled input (e.g. a collection pasted into the Add field), previewed on open. */
+  initialInput?: string;
   onClose: () => void;
   onInstalled: () => void;
 }
 
-export function ImportModsModal({ serverId, onClose, onInstalled }: Props) {
-  const [input, setInput] = useState("");
+export function ImportModsModal({ serverId, initialInput, onClose, onInstalled }: Props) {
+  const [input, setInput] = useState(initialInput ?? "");
   const [items, setItems] = useState<ImportPreviewItem[] | null>(null);
   const [unparsed, setUnparsed] = useState<string[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
   const [installing, setInstalling] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (initialInput) void preview();
+    // Preview the pre-filled input once, on open.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function preview() {
     if (!input.trim()) return;
@@ -89,7 +97,7 @@ export function ImportModsModal({ serverId, onClose, onInstalled }: Props) {
         <h2 className="text-lg font-semibold">Import mods</h2>
         <p className="mt-1 text-sm text-muted-foreground">
           Paste a collection URL/ID, mod URLs, or a list of Workshop IDs (commas, spaces, or
-          new lines). A single collection is expanded automatically.
+          new lines). Collections are expanded into their items automatically.
         </p>
 
         <textarea

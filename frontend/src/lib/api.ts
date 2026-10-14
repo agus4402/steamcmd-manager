@@ -22,6 +22,7 @@ import type {
   ConfigFilesList,
   ConfigFileContent,
   ConfigWriteResult,
+  LoadOrder,
 } from "./types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
@@ -194,6 +195,19 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ path, restart }),
     }),
+  loadOrder: (id: string) => request<LoadOrder>(`/api/servers/${id}/mods/load-order`),
+  setLoadOrder: (id: string, order: { id: string; enabled: boolean }[]) =>
+    request<LoadOrder>(`/api/servers/${id}/mods/load-order`, {
+      method: "PUT",
+      body: JSON.stringify({ order }),
+    }),
+  toggleSubmod: (id: string, submodId: string, enabled: boolean) =>
+    request<null>(`/api/servers/${id}/mods/submods/${submodId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ enabled }),
+    }),
+  inspectMod: (id: string, modId: string) =>
+    request<LoadOrder>(`/api/servers/${id}/mods/${modId}/inspect`, { method: "POST" }),
   removeMod: (id: string, modId: string) =>
     request<null>(`/api/servers/${id}/mods/${modId}`, { method: "DELETE" }),
   retryMod: (id: string, modId: string) =>

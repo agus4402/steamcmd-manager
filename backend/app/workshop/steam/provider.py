@@ -135,3 +135,8 @@ class SteamWorkshopProvider(WorkshopProvider):
     async def resolve_collection(self, collection_id: str) -> list[str]:
         result = await api.get_collection_details([collection_id])
         return result.get(collection_id, [])
+
+    async def resolve_collections(self, ids: list[str]) -> dict[str, list[str]]:
+        # One keyless call for all ids; plain items come back with no children.
+        result = await api.get_collection_details(ids)
+        return {cid: members for cid, members in result.items() if members}

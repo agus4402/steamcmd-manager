@@ -9,7 +9,9 @@
 # Inputs (env, set by the panel):
 #   PUBLIC_NAME SERVER_PASSWORD MAX_PLAYERS PUBLIC PVP RCON_PASSWORD MEMORY
 #   PORT_game PORT_rcon          allocated host ports
-#   WORKSHOP_ITEMS               ";"-separated workshop item ids, load order
+#   WORKSHOP_ITEMS               ";"-separated workshop item ids
+#   WORKSHOP_MOD_IDS WORKSHOP_MAPS  enabled mod ids in load order + their maps
+#                                (when unset: auto-detect every mod in the items)
 #   STEAM_BRANCH                 "legacy41" => prefer Build 41 mod.info files
 set -euo pipefail
 
@@ -107,6 +109,10 @@ for item in "${wanted[@]}"; do
                 break
             fi
         done < <(for d in "${moddir}"4*/; do [ -d "${d}" ] && basename "${d}"; done | sort -V -r)
+        # B42 fallback: version folders present but mod.info only in common/.
+        if [ -z "${info}" ] && [ -f "${moddir}common/mod.info" ]; then
+            info="${moddir}common/mod.info"
+        fi
         if [ -z "${info}" ] && [ -f "${moddir}mod.info" ]; then
             info="${moddir}mod.info"
         fi
@@ -124,6 +130,19 @@ for item in "${wanted[@]}"; do
         done < <(find "${moddir}" -mindepth 3 -maxdepth 4 -type d -iregex '.*/media/maps/[^/]+' | sort)
     done
 done
+
+# The panel sends the user's choice (enabled mod ids in load order + their maps)
+# once it has inspected the items; the auto-detection above is the fallback.
+if [ -n "${WORKSHOP_MOD_IDS+x}" ]; then
+    mods=()
+    maps=()
+    IFS=';' read -ra chosen <<<"$(clean "${WORKSHOP_MOD_IDS}")"
+    for id in "${chosen[@]}"; do [ -z "${id}" ] || append_unique mods "${id}"; done
+    IFS=';' read -ra chosen <<<"$(clean "${WORKSHOP_MAPS:-}")"
+    for map in "${chosen[@]}"; do
+        [ -z "${map}" ] || [ "${map}" = "${DEFAULT_MAP}" ] || append_unique maps "${map}"
+    done
+fi
 maps+=("${DEFAULT_MAP}")
 
 join() { local IFS=';'; echo "$*"; }
