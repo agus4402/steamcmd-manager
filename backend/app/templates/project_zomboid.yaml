@@ -2,31 +2,69 @@ id: project_zomboid
 name: "Project Zomboid Dedicated Server"
 # App 380870 is the dedicated-server app (not the client App 108600).
 # Ships a Linux binary and is downloadable via SteamCMD anonymously.
+# The public branch is Build 42 (stable since 2026-07-29); servers that must stay
+# on Build 41 can pick the "legacy41" branch in Settings (B41 mods don't run on
+# B42 and vice versa).
 app_id: 380870
 anonymous_login: true
 install_dir: /data
 ports:
-  # PZ binds PORT_game (UDP) for game traffic and PORT_game+1 for the Steam query
-  # port, so two consecutive UDP ports must be reserved.
+  # PZ binds PORT_game (UDP) for game traffic and PORT_game+1 (UDPPort in the
+  # .ini, written by the prestart hook) for direct connections.
   - name: game
     protocol: udp
     default: 16261
     count: 2
+  # Source RCON (TCP), for external admin tools. Password = RCON_PASSWORD.
+  - name: rcon
+    protocol: tcp
+    default: 27015
+# -cachedir moves PZ's data dir (world saves, Server/*.ini, db) from ~/Zomboid —
+# which lives in the throwaway container — into the persistent /data volume, so
+# the world survives restarts and is included in backups.
+# -servername is the .ini/save FILE name, so it's fixed; the name players see is
+# PUBLIC_NAME (written to the .ini as PublicName by the prestart hook).
+# -adminpassword only takes effect when the admin user is first created.
 startup: >
-  ./start-server.sh -servername "{{SERVER_NAME}}"
+  ./start-server.sh -cachedir=/data/Zomboid -servername pzserver
   -port {{PORT_game}} -adminpassword "{{ADMIN_PASSWORD}}"
-  -password "{{SERVER_PASSWORD}}"
 variables:
-  - key: SERVER_NAME
+  - key: PUBLIC_NAME
     default: "My PZ Server"
+  - key: SERVER_PASSWORD
+    default: ""          # empty => no password (anyone can join)
+    generate: false
   - key: ADMIN_PASSWORD
     default: ""          # empty => panel generates a strong password
-  - key: SERVER_PASSWORD
-    default: ""          # empty => panel generates one; leave empty for public server
+  - key: RCON_PASSWORD
+    default: ""          # empty => panel generates a strong password
+  - key: MAX_PLAYERS
+    default: "16"
+  - key: PUBLIC
+    default: "true"      # list the server in the in-game browser
+  - key: PVP
+    default: "true"
+  - key: MEMORY
+    # JVM heap (-Xmx) for the server. Keep it below the container memory limit
+    # (WORKER_MEM_LIMIT, 4g by default). Empty => keep the game's own default.
+    default: "3g"
+# Everything the panel manages in Zomboid/Server/pzserver.ini (names, password,
+# ports, RCON, WorkshopItems/Mods/Map from the Workshop tab) and the -Xmx in
+# ProjectZomboid64.json is (re)written before every start by this hook:
+# docker/gameserver/hooks/project_zomboid.sh
+prestart_hook: project_zomboid
+# "quit" saves the world and shuts down cleanly; a plain SIGTERM can lose progress.
+stop_command: quit
+stop_timeout: 120
+branches:
+  - legacy41
 # Steam Workshop: PZ's workshop content lives under the CLIENT app 108600 (not the
-# dedicated-server app 380870). Items are downloaded into the data dir; enable them
-# in the server's .ini (WorkshopItems=/Mods=).
+# dedicated-server app 380870). Installed items are enabled automatically on the
+# next start (the prestart hook fills WorkshopItems=/Mods=/Map= from them).
 workshop:
   app_id: 108600
   install_path: "steamapps/workshop/content/108600"
+  note: >
+    Installed mods are enabled automatically on the next start or restart
+    (WorkshopItems, Mods and Map in pzserver.ini are managed by the panel).
 update_on_start: true

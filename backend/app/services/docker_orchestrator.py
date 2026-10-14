@@ -128,8 +128,17 @@ class DockerOrchestrator:
     def start(self, server_id: str) -> None:
         self._request("POST", f"/servers/{server_id}/start")
 
-    def stop(self, server_id: str, timeout: int = DEFAULT_STOP_TIMEOUT) -> None:
-        self._request("POST", f"/servers/{server_id}/stop")
+    def stop(
+        self, server_id: str, timeout: int = DEFAULT_STOP_TIMEOUT, command: str | None = None
+    ) -> None:
+        # The agent may wait `timeout` for a graceful exit, then up to ~10s more
+        # for docker stop; keep the HTTP read open past that.
+        self._request(
+            "POST",
+            f"/servers/{server_id}/stop",
+            json={"command": command, "timeout": timeout},
+            timeout=httpx.Timeout(30.0, read=timeout + 30),
+        )
 
     def restart(self, server_id: str, timeout: int = DEFAULT_STOP_TIMEOUT) -> None:
         self._request("POST", f"/servers/{server_id}/restart")

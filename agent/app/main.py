@@ -34,6 +34,7 @@ from app.schemas import (
     StateResponse,
     StatsResponse,
     StdinRequest,
+    StopRequest,
     WorkshopDownloadRequest,
 )
 
@@ -47,6 +48,8 @@ SERVER_ID_RE = re.compile(r"^[A-Za-z0-9]{1,32}$")
 PORT_BINDING_RE = re.compile(r"^(\d{1,5})/(tcp|udp)$")
 WORKSHOP_ITEM_RE = re.compile(r"^\d{1,20}$")
 WORKSHOP_PATH_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_./-]*$")
+# One printable console line (no newlines/control chars), e.g. "quit".
+STOP_COMMAND_RE = re.compile(r"^[ -~]{1,128}$")
 
 
 def _validate_workshop(item_id: str, install_path: str) -> None:
@@ -148,8 +151,13 @@ async def start(server_id: str = Depends(valid_server_id)) -> None:
 
 
 @app.post("/servers/{server_id}/stop", dependencies=authed, status_code=204)
-async def stop(server_id: str = Depends(valid_server_id)) -> None:
-    await run_in_threadpool(orchestrator.stop, server_id)
+async def stop(
+    payload: StopRequest | None = None, server_id: str = Depends(valid_server_id)
+) -> None:
+    req = payload or StopRequest()
+    if req.command is not None and not STOP_COMMAND_RE.match(req.command):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid stop command")
+    await run_in_threadpool(orchestrator.stop, server_id, req.timeout, req.command)
 
 
 @app.post("/servers/{server_id}/restart", dependencies=authed, status_code=204)

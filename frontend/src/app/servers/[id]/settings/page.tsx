@@ -2,9 +2,11 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import useSWR from "swr";
 import { toast } from "sonner";
-import { RefreshCw, Gauge, ShieldAlert, RotateCcw, Copy } from "lucide-react";
+import { RefreshCw, Gauge, ShieldAlert, RotateCcw, Copy, GitBranch } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
+import type { Template } from "@/lib/types";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input, Label } from "@/components/ui/input";
@@ -14,15 +16,32 @@ import { useServerCtx } from "../server-context";
 
 export default function ServerSettingsPage() {
   const router = useRouter();
-  const { server, del, act, pending } = useServerCtx();
+  const { server, mutate, del, act, pending } = useServerCtx();
   const [cloneName, setCloneName] = useState("");
   const [cloning, setCloning] = useState(false);
+  const [branch, setBranch] = useState(server.steam_branch ?? "");
+  const [savingBranch, setSavingBranch] = useState(false);
+  const { data: templates } = useSWR<Template[]>("templates", () => api.templates());
+  const branchHints = templates?.find((t) => t.id === server.template_id)?.branches ?? [];
 
   const busy = !!pending[server.id];
 
   function reinstall() {
     if (!confirm("Reinstall this server? Its data volume will be wiped and the game re-downloaded.")) return;
     act(server, "reinstall");
+  }
+
+  async function saveBranch() {
+    setSavingBranch(true);
+    try {
+      await api.patch(server.id, { steam_branch: branch.trim() || null });
+      toast.success("Steam branch saved", { description: "Applies on the next update or start." });
+      await mutate();
+    } catch (e) {
+      toast.error("Failed to save", { description: e instanceof ApiError ? e.message : String(e) });
+    } finally {
+      setSavingBranch(false);
+    }
   }
 
   async function clone() {
@@ -57,6 +76,42 @@ export default function ServerSettingsPage() {
           </div>
           {/* Editing requires PATCH support for `update_on_start` (later phase). */}
           <Switch checked={server.update_on_start} onCheckedChange={() => {}} disabled aria-label="Update on start" />
+        </CardContent>
+      </Card>
+
+      {/* Steam branch */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="flex items-center gap-2 text-sm">
+            <GitBranch className="size-4 text-muted-foreground" /> Steam branch
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-3 sm:flex-row sm:items-end">
+          <div className="flex-1">
+            <Label htmlFor="steam-branch">Beta branch</Label>
+            <Input
+              id="steam-branch"
+              value={branch}
+              onChange={(e) => setBranch(e.target.value)}
+              placeholder="public"
+              list="steam-branch-hints"
+            />
+            <datalist id="steam-branch-hints">
+              {branchHints.map((b) => (
+                <option key={b} value={b} />
+              ))}
+            </datalist>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Leave empty for the public branch. Applies on the next update or start
+              {branchHints.length > 0 && <> (available: {branchHints.join(", ")})</>}.
+            </p>
+          </div>
+          <Button
+            onClick={saveBranch}
+            disabled={savingBranch || branch.trim() === (server.steam_branch ?? "")}
+          >
+            {savingBranch ? "Saving…" : "Save"}
+          </Button>
         </CardContent>
       </Card>
 

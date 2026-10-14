@@ -36,10 +36,12 @@ RUN mkdir -p /data /home/steam/Steam \
     && chown steam:steam /data /home/steam/Steam
 
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
-# Normalize CRLF -> LF so the script runs even if checked out on Windows, then
-# make it executable.
-RUN sed -i 's/\r$//' /usr/local/bin/entrypoint.sh \
-    && chmod +x /usr/local/bin/entrypoint.sh
+# Game-specific prestart hooks (see PRESTART_HOOK in entrypoint.sh).
+COPY hooks/ /opt/hooks/
+# Normalize CRLF -> LF so the scripts run even if checked out on Windows, then
+# make them executable.
+RUN sed -i 's/\r$//' /usr/local/bin/entrypoint.sh /opt/hooks/*.sh \
+    && chmod +x /usr/local/bin/entrypoint.sh /opt/hooks/*.sh
 
 USER steam
 ENV STEAMCMD_DIR=/home/steam/steamcmd \

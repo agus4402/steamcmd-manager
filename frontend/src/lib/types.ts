@@ -29,6 +29,8 @@ export interface Server {
   anonymous_login: boolean;
   update_on_start: boolean;
   max_backups: number;
+  /** Steam beta branch for installs/updates; null = public branch. */
+  steam_branch: string | null;
   /** Non-null when the game supports Steam Workshop (drives the Workshop tab). */
   workshop_app_id: number | null;
   workshop_auto_update: string;
@@ -157,6 +159,10 @@ export interface Template {
   ports: TemplatePort[];
   variables: TemplateVar[];
   update_on_start: boolean;
+  /** Suggested Steam beta branches (e.g. "legacy41"). */
+  branches: string[];
+  /** How downloaded Workshop mods get enabled for this game. */
+  workshop_note: string | null;
 }
 
 export interface SteamCredentials {

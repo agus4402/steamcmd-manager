@@ -24,7 +24,7 @@ from app.schemas.server import ServerCreate
 from app.schemas.template import PLACEHOLDER_RE, GameTemplate, render_startup
 from app.services import notification_service
 from app.services.crypto import decrypt_credentials, encrypt_credentials
-from app.services.docker_orchestrator import DockerError, orchestrator
+from app.services.docker_orchestrator import DEFAULT_STOP_TIMEOUT, DockerError, orchestrator
 from app.services.port_manager import allocate_ports
 from app.services.template_loader import get_template
 
@@ -60,7 +60,7 @@ def _resolve_variables(template: GameTemplate, overrides: dict[str, str]) -> dic
     for var in template.variables:
         value = overrides.get(var.key, var.default)
         # Generate a strong secret for empty password-like variables.
-        if value == "" and var.key.upper().endswith("PASSWORD"):
+        if value == "" and var.should_generate():
             value = secrets.token_urlsafe(12)
         values[var.key] = value
     return values
@@ -247,11 +247,10 @@ async def restore_snapshot(
     """Stop the server (files can't be replaced underneath it) and restore."""
     if server.status in INFLIGHT:
         raise ServerError("an install/update is in progress")
-    await run_in_threadpool(orchestrator.stop, server.id)
+    await _stop_container(server)
     await run_in_threadpool(orchestrator.restore_snapshot, server.id, snapshot_id)
     if start_after:
-        await run_in_threadpool(orchestrator.start, server.id)
-        server.status = ServerStatus.RUNNING.value
+        await _do_start(session, server, None)
     elif server.status == ServerStatus.RUNNING.value:
         server.status = ServerStatus.STOPPED.value
     await session.commit()
@@ -275,6 +274,8 @@ async def get_server(session: AsyncSession, server_id: str) -> Server | None:
 
 def _base_steam_env(server: Server, creds: dict[str, str] | None) -> dict[str, str]:
     env: dict[str, str] = {"STEAM_APP_ID": str(server.app_id), "INSTALL_DIR": "/data"}
+    if server.steam_branch:
+        env["STEAM_BRANCH"] = server.steam_branch
     if server.anonymous_login or not creds:
         env["STEAM_LOGIN_USER"] = "anonymous"
     else:
@@ -291,7 +292,11 @@ def build_install_env(server: Server, creds: dict[str, str] | None = None) -> di
     return env
 
 
-def build_runtime_env(server: Server, creds: dict[str, str] | None = None) -> dict[str, str]:
+def build_runtime_env(
+    server: Server,
+    creds: dict[str, str] | None = None,
+    workshop_items: list[str] | None = None,
+) -> dict[str, str]:
     # The long-lived server container NEVER runs steamcmd: installs/updates always
     # happen in a separate one-shot container (so progress shows as installing/
     # updating, never hidden behind a misleading "running" status).
@@ -306,7 +311,33 @@ def build_runtime_env(server: Server, creds: dict[str, str] | None = None) -> di
     # Expose declared variables to the startup script's environment too.
     for key, value in server.variables.items():
         env[key] = str(value)
+    # ...and the allocated ports, so prestart hooks can write them into the
+    # game's own config (e.g. a query/RCON port the CLI can't set).
+    for key, value in port_map(server).items():
+        env[key] = str(value)
+    if template.prestart_hook:
+        env["PRESTART_HOOK"] = template.prestart_hook
+    if workshop_items is not None:
+        # Load order: dependencies first, then in the order they were added.
+        env["WORKSHOP_ITEMS"] = ";".join(workshop_items)
     return env
+
+
+async def _workshop_items(session: AsyncSession, server: Server) -> list[str] | None:
+    """Workshop item ids to enable on start (None if the game has no workshop)."""
+    if server.workshop_app_id is None:
+        return None
+    from app.models.workshop_mod import WorkshopMod  # late import avoids a cycle
+
+    rows = await session.scalars(
+        select(WorkshopMod.item_id)
+        .where(
+            WorkshopMod.server_id == server.id,
+            WorkshopMod.status.not_in(("error", "missing_dependency")),
+        )
+        .order_by(WorkshopMod.is_dependency.desc(), WorkshopMod.created_at)
+    )
+    return list(rows)
 
 
 # -- install progress ---------------------------------------------------------
@@ -511,7 +542,7 @@ async def update_server(
         raise ServerError("an install/update is already in progress")
     creds = await _resolve_creds(server, creds)
     # Stop the server before updating files underneath it.
-    await run_in_threadpool(orchestrator.stop, server.id)
+    await _stop_container(server)
     server.status = ServerStatus.UPDATING.value
     server.error_message = None
     await session.commit()
@@ -519,11 +550,23 @@ async def update_server(
     asyncio.create_task(_install_job(server.id, env, ServerStatus.STOPPED))
 
 
+async def _stop_container(server: Server) -> None:
+    """Stop the server container, letting the game save + exit on its own first
+    when its template defines a `stop_command` (e.g. Project Zomboid's `quit`)."""
+    command, timeout = None, DEFAULT_STOP_TIMEOUT
+    try:
+        template = get_template(server.template_id)
+        command, timeout = template.stop_command, template.stop_timeout
+    except Exception:  # noqa: BLE001 — unknown/removed template: plain stop
+        pass
+    await run_in_threadpool(orchestrator.stop, server.id, timeout, command)
+
+
 async def _do_start(
     session: AsyncSession, server: Server, creds: dict[str, str] | None
 ) -> None:
     """Create + start the long-lived server container (no steamcmd here)."""
-    env = build_runtime_env(server, creds)
+    env = build_runtime_env(server, creds, await _workshop_items(session, server))
     bindings = docker_port_bindings(server)
     container_id = await run_in_threadpool(
         orchestrator.create_server_container, server.id, env, bindings
@@ -566,7 +609,7 @@ async def start_server(
 
 
 async def stop_server(session: AsyncSession, server: Server) -> None:
-    await run_in_threadpool(orchestrator.stop, server.id)
+    await _stop_container(server)
     server.status = ServerStatus.STOPPED.value
     await session.commit()
 
@@ -581,10 +624,10 @@ async def restart_server(
         # Nothing to restart — bring it up fresh.
         await start_server(session, server, creds)
         return
-    await run_in_threadpool(orchestrator.restart, server.id)
-    server.status = ServerStatus.RUNNING.value
-    server.error_message = None
-    await session.commit()
+    # Graceful stop + fresh container (not `docker restart`): the game gets to
+    # save, and the new container picks up current env/mods/prestart hook.
+    await _stop_container(server)
+    await _do_start(session, server, creds)
 
 
 async def delete_server(session: AsyncSession, server: Server) -> None:
@@ -600,6 +643,9 @@ async def patch_server(
     server: Server,
     variables: dict[str, str] | None,
     startup_template: str | None,
+    *,
+    steam_branch: str | None = None,
+    set_branch: bool = False,
 ) -> Server:
     if variables is not None:
         unknown = set(variables) - set(server.variables)
@@ -613,6 +659,8 @@ async def patch_server(
         if unknown_ph:
             raise ServerError(f"startup references unknown placeholders: {sorted(unknown_ph)}")
         server.startup_template = startup_template
+    if set_branch:
+        server.steam_branch = steam_branch or None
     await session.commit()
     await session.refresh(server)
     return server

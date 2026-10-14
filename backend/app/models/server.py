@@ -56,6 +56,10 @@ class Server(Base):
 
     max_backups: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
 
+    # Steam beta branch to install/update from (steamcmd `-beta <name>`);
+    # NULL = the public default branch.
+    steam_branch: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
     # Steam Workshop content app id, copied from the template at create time when
     # the game is workshop-capable; NULL means workshop is not supported (the UI
     # hides the Workshop tab).

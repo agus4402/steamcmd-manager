@@ -10,7 +10,10 @@
 #   RUN_INSTALL          "1" => run steamcmd app_update before anything else
 #   VALIDATE             "1" => add "validate" to app_update (integrity check)
 #   INSTALL_ONLY         "1" => exit after install (one-shot install/update job)
+#   STEAM_BRANCH         Steam beta branch for app_update (-beta); empty = public
 #   STARTUP_CMD          command to exec to launch the server (rendered by panel)
+#   PRESTART_HOOK        name of a game-specific script in /opt/hooks run right
+#                        before launch (e.g. writes the game's config file)
 #
 # Credentials are passed positionally to steamcmd and are NEVER echoed.
 set -euo pipefail
@@ -40,6 +43,14 @@ run_steamcmd() {
     fi
 
     local update_args=("+app_update" "${STEAM_APP_ID}")
+    if [ -n "${STEAM_BRANCH:-}" ]; then
+        if [[ ! "${STEAM_BRANCH}" =~ ^[A-Za-z0-9_.-]{1,64}$ ]]; then
+            log "ERROR: invalid STEAM_BRANCH '${STEAM_BRANCH}'"
+            exit 2
+        fi
+        update_args+=("-beta" "${STEAM_BRANCH}")
+        log "using Steam branch '${STEAM_BRANCH}'"
+    fi
     if [ "${VALIDATE:-0}" = "1" ]; then
         update_args+=("validate")
     fi
@@ -168,6 +179,18 @@ cd "${INSTALL_DIR}"
 # binary in ./linux64 and expect it on the loader path. The official launch
 # scripts do this manually; we set it generically so templates don't have to.
 export LD_LIBRARY_PATH="${INSTALL_DIR}/linux64:${INSTALL_DIR}:${LD_LIBRARY_PATH:-}"
+
+# Game-specific pre-launch hook (baked into the image, never user-supplied):
+# e.g. write the game's config file from the panel's variables/ports/mods.
+if [ -n "${PRESTART_HOOK:-}" ]; then
+    hook="/opt/hooks/${PRESTART_HOOK}.sh"
+    if [[ ! "${PRESTART_HOOK}" =~ ^[A-Za-z0-9_]+$ ]] || [ ! -f "${hook}" ]; then
+        log "ERROR: unknown prestart hook '${PRESTART_HOOK}'"
+        exit 3
+    fi
+    log "running prestart hook ${PRESTART_HOOK}"
+    bash "${hook}"
+fi
 
 # Run through bash -c so the rendered startup string (already validated by the
 # panel against a placeholder whitelist) is interpreted as a command line.

@@ -24,6 +24,8 @@ async def list_templates() -> list[TemplateOut]:
             ports=[{"name": p.name, "protocol": p.protocol, "default": p.default} for p in t.ports],
             variables=[{"key": v.key, "default": v.default} for v in t.variables],
             update_on_start=t.update_on_start,
+            branches=t.branches,
+            workshop_note=t.workshop.note if t.workshop else None,
         )
         for t in get_templates().values()
     ]

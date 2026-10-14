@@ -14,9 +14,10 @@ import {
   RefreshCw,
   ArrowUpCircle,
   FolderSync,
+  Info,
 } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
-import { WORKSHOP_INFLIGHT, type WorkshopMod } from "@/lib/types";
+import { WORKSHOP_INFLIGHT, type Template, type WorkshopMod } from "@/lib/types";
 import { formatCount, timeAgo } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input, Label } from "@/components/ui/input";
@@ -40,6 +41,9 @@ export default function ServerWorkshopPage() {
         d?.some((m) => WORKSHOP_INFLIGHT.includes(m.status)) ? 2500 : 0,
     },
   );
+
+  const { data: templates } = useSWR<Template[]>("templates", () => api.templates());
+  const workshopNote = templates?.find((t) => t.id === server.template_id)?.workshop_note;
 
   const [tab, setTab] = useState<"installed" | "browse">("installed");
   const [item, setItem] = useState("");
@@ -196,6 +200,13 @@ export default function ServerWorkshopPage() {
 
   return (
     <div className="flex flex-col gap-6">
+      {workshopNote && (
+        <p className="flex items-start gap-2 rounded-md border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+          <Info className="mt-0.5 size-3.5 shrink-0" />
+          {workshopNote}
+        </p>
+      )}
+
       {/* Sub-tabs */}
       <div className="flex gap-1 border-b border-border">
         {(["installed", "browse"] as const).map((t) => (

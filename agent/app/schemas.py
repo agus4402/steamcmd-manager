@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class CreateContainerRequest(BaseModel):
@@ -17,6 +17,14 @@ class InstallRequest(BaseModel):
 
 class StdinRequest(BaseModel):
     data: str
+
+
+class StopRequest(BaseModel):
+    # Console command that makes the game save + exit on its own (e.g. "quit").
+    # Validated to a single short line in main.py.
+    command: str | None = None
+    # Seconds to wait for a clean exit before docker-stopping the container.
+    timeout: int = Field(default=30, ge=1, le=600)
 
 
 class WorkshopDownloadRequest(BaseModel):

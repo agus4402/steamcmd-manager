@@ -59,6 +59,10 @@ Top-level (`GameTemplate`):
 | `supported` | bool | `true` | `false` ⇒ template stays in the catalog but the panel **blocks creating a server** from it. Use for games that can't be self-hosted. |
 | `unsupported_reason` | str\|null | `null` | Shown to the user when `supported: false`. Explain *why* (e.g. no public server files, Windows-only). |
 | `workshop` | map\|null | `null` | Steam Workshop support. Presence marks the game as workshop-capable (the UI shows the **Workshop** tab only then). See WorkshopSpec + [Steam Workshop](#steam-workshop). |
+| `stop_command` | str\|null | `null` | Console command sent to stdin on stop/restart so the game **saves and exits by itself** (e.g. PZ `quit`). Single printable line. Without it the container is just docker-stopped (SIGTERM → SIGKILL after 30s). |
+| `stop_timeout` | int 5–600 | `30` | Seconds to wait for `stop_command` before forcing the stop. Big worlds need more (PZ uses 120). |
+| `prestart_hook` | str\|null | `null` | Name of a script baked into the gameserver image at `docker/gameserver/hooks/<name>.sh`, run right before launch. See [Prestart hooks](#prestart-hooks). |
+| `branches` | list[str] | `[]` | Steam beta branches suggested in the server's Settings → Steam branch (e.g. `legacy41`). Any valid branch can still be typed. |
 
 PortSpec (each `ports` entry):
 
@@ -74,7 +78,8 @@ VarSpec (each `variables` entry):
 | Field | Type | Default | Notes |
 |-------|------|---------|-------|
 | `key` | str | — | `[A-Za-z0-9_]+`. Referenced in startup as `{{key}}`. |
-| `default` | str | `""` | Empty `RCON_PASSWORD`/`SERVER_PASSWORD` ⇒ panel auto-generates a strong value. |
+| `default` | str | `""` | Empty `*PASSWORD` value ⇒ panel auto-generates a strong value (see `generate`). |
+| `generate` | bool\|null | `null` | Auto-generate a secret when empty. `null` = only for keys ending in `PASSWORD`; `false` opts out (e.g. a join password where empty = public server). |
 
 WorkshopSpec (the optional `workshop` map):
 
@@ -82,6 +87,7 @@ WorkshopSpec (the optional `workshop` map):
 |-------|------|---------|-------|
 | `app_id` | int ≥1 | — | Steam app whose **workshop content** is downloaded. Often the **client** game App ID, which differs from the dedicated-server `app_id` (e.g. Project Zomboid: server `380870`, workshop `108600`). |
 | `install_path` | str | `steamapps/workshop` | Where items land inside the data dir, as `install_path/<item_id>`. Must be a **safe relative path** (no leading `/`, no `..`). |
+| `note` | str\|null | `null` | Shown at the top of the Workshop tab: how downloaded mods get enabled in this game. |
 
 ## Placeholder rules
 
@@ -134,6 +140,26 @@ workshop:
 > Changing the gameserver **entrypoint** (workshop mode) requires rebuilding the
 > `steamcmd-manager/gameserver` image — it is not rebuilt by `docker compose build`.
 
+## Persistence
+
+Only `/data` is a volume, and the server container is **recreated on every start**.
+Anything the game writes outside `/data` (commonly `~/<Game>` or `~/.config/...`) is
+lost on restart and missing from backups. Point it into `/data` with the game's own
+flag (PZ: `-cachedir=/data/Zomboid`; Valheim: `-savedir`), and verify after one
+start/stop cycle that the world is still there.
+
+## Prestart hooks
+
+For settings the game only reads from its own config file (not the CLI), add a hook
+script at `docker/gameserver/hooks/<name>.sh` and set `prestart_hook: <name>`. The
+entrypoint runs it (with `bash`, cwd `/data`) right before `exec`ing `startup`. It
+receives as env vars: every template variable, every primary port as `PORT_<name>`,
+the template's `env`, and — for workshop games — `WORKSHOP_ITEMS` (`;`-separated item
+ids, dependencies first). A non-zero exit aborts the start. Write only the keys the
+panel manages and leave the rest of the file alone. Hooks are baked into the image:
+**rebuild `steamcmd-manager/gameserver`** after changing one.
+`project_zomboid.sh` is the reference (writes `pzserver.ini` + JVM heap).
+
 ## Unsupported games
 
 Not every game with a Steam "dedicated server" app can actually be self-hosted here.
@@ -184,5 +210,6 @@ rejects server creation (`create_server` raises) and the UI shows a "Not support
   [Unsupported games](#unsupported-games)).
 - **Adding a `workshop` block for a game that has no Steam Workshop mods** — this only
   clutters the UI with a Workshop tab that downloads nothing useful. Omit it.
+- **Game data outside `/data`** — world resets on every start. See [Persistence](#persistence).
 - **Using the dedicated-server `app_id` as `workshop.app_id`** — workshop content almost
   always lives under the *client* game's App ID. Wrong id ⇒ downloads find nothing.

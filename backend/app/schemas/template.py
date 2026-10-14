@@ -11,6 +11,10 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 PLACEHOLDER_RE = re.compile(r"\{\{\s*([A-Za-z0-9_]+)\s*\}\}")
 # Template identifiers / variable keys must be simple tokens (no shell metachars).
 TOKEN_RE = re.compile(r"^[A-Za-z0-9_]+$")
+# Steam beta branch names (passed to steamcmd as `-beta <name>`).
+BRANCH_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
+# One printable console line (no newlines/control chars), e.g. "quit".
+STOP_COMMAND_RE = re.compile(r"^[ -~]{1,128}$")
 
 
 class PortSpec(BaseModel):
@@ -36,6 +40,15 @@ class PortSpec(BaseModel):
 class VarSpec(BaseModel):
     key: str
     default: str = ""
+    # Auto-generate a strong secret when the value is empty. None keeps the
+    # legacy heuristic (keys ending in PASSWORD); false opts out, e.g. a game
+    # password where empty means "public server".
+    generate: bool | None = None
+
+    def should_generate(self) -> bool:
+        if self.generate is not None:
+            return self.generate
+        return self.key.upper().endswith("PASSWORD")
 
     @field_validator("key")
     @classmethod
@@ -62,6 +75,9 @@ class WorkshopSpec(BaseModel):
 
     app_id: int = Field(ge=1)
     install_path: str = "steamapps/workshop"
+    # Shown in the Workshop tab: how downloaded mods get enabled in this game
+    # (automatically by a prestart hook, or what the user must edit by hand).
+    note: str | None = None
 
     @field_validator("install_path")
     @classmethod
@@ -94,6 +110,39 @@ class GameTemplate(BaseModel):
     update_on_start: bool = True
     # Optional Steam Workshop support; when set the game is "workshop-capable".
     workshop: WorkshopSpec | None = None
+    # Console command that makes the game save and exit by itself (sent to
+    # stdin on stop/restart). Without it the container is just docker-stopped.
+    stop_command: str | None = None
+    # Seconds to wait for `stop_command` to finish before forcing the stop.
+    stop_timeout: int = Field(default=30, ge=5, le=600)
+    # Name of a game-specific script baked into the gameserver image
+    # (/opt/hooks/<name>.sh) that runs right before launch, e.g. to write the
+    # game's config file from variables. Never user-supplied content.
+    prestart_hook: str | None = None
+    # Steam beta branches offered as suggestions in the UI (e.g. "legacy41").
+    branches: list[str] = Field(default_factory=list)
+
+    @field_validator("stop_command")
+    @classmethod
+    def _valid_stop_command(cls, v: str | None) -> str | None:
+        if v is not None and not STOP_COMMAND_RE.match(v):
+            raise ValueError("stop_command must be a single printable line (max 128 chars)")
+        return v
+
+    @field_validator("prestart_hook")
+    @classmethod
+    def _valid_hook(cls, v: str | None) -> str | None:
+        if v is not None and not TOKEN_RE.match(v):
+            raise ValueError(f"prestart_hook '{v}' must match [A-Za-z0-9_]+")
+        return v
+
+    @field_validator("branches")
+    @classmethod
+    def _valid_branches(cls, v: list[str]) -> list[str]:
+        for b in v:
+            if not BRANCH_RE.match(b):
+                raise ValueError(f"branch '{b}' must match {BRANCH_RE.pattern}")
+        return v
 
     @property
     def workshop_supported(self) -> bool:

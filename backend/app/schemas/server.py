@@ -79,6 +79,8 @@ class TemplateOut(BaseModel):
     ports: list[TemplatePortOut]
     variables: list[TemplateVarOut]
     update_on_start: bool
+    branches: list[str] = []
+    workshop_note: str | None = None
 
 
 class SteamCredentials(BaseModel):
@@ -96,6 +98,9 @@ class ServerCreate(BaseModel):
 class ServerUpdate(BaseModel):
     variables: dict[str, str] | None = None
     startup_template: str | None = None
+    # Steam beta branch; "" or null resets to the public branch. Only applied
+    # when the field is present in the request.
+    steam_branch: str | None = Field(default=None, pattern=r"^([A-Za-z0-9_.-]{1,64})?$")
 
 
 class BackupConfigUpdate(BaseModel):
@@ -118,6 +123,7 @@ class ServerOut(BaseModel):
     anonymous_login: bool
     update_on_start: bool
     max_backups: int = 0
+    steam_branch: str | None = None
     # Non-null when the game supports Steam Workshop (drives the Workshop tab).
     workshop_app_id: int | None = None
     workshop_auto_update: str = "disabled"

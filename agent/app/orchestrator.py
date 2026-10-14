@@ -245,10 +245,38 @@ class DockerOrchestrator:
     def start(self, server_id: str) -> None:
         self._require(server_id).start()
 
-    def stop(self, server_id: str, timeout: int = DEFAULT_STOP_TIMEOUT) -> None:
+    def stop(
+        self, server_id: str, timeout: int = DEFAULT_STOP_TIMEOUT, command: str | None = None
+    ) -> None:
+        """Stop the server container.
+
+        With `command` (e.g. "quit"), first ask the game to save and exit on its
+        own via stdin and wait up to `timeout` for it; only a server that ignores
+        it gets docker-stopped (SIGTERM, then SIGKILL). Without it, plain stop.
+        """
         c = self._get(self.container_name(server_id))
         if c is None:
             return
+        if command:
+            c.reload()
+            if c.status == "running":
+                try:
+                    # A self-initiated exit would otherwise be undone by the
+                    # unless-stopped policy. Safe to drop: the container is
+                    # recreated (with the policy) on every start.
+                    c.update(restart_policy={"Name": "no"})
+                    self.send_stdin(server_id, command)
+                    c.wait(timeout=timeout)
+                    logger.info("server %s exited after %r", server_id, command)
+                    return
+                except (ReadTimeout, RequestsConnectionError):
+                    logger.warning(
+                        "server %s still running %ss after %r; forcing stop",
+                        server_id, timeout, command,
+                    )
+                except (APIError, DockerError) as exc:
+                    logger.warning("graceful stop of %s failed (%s); forcing stop", server_id, exc)
+            timeout = 10
         c.stop(timeout=timeout)
 
     def restart(self, server_id: str, timeout: int = DEFAULT_STOP_TIMEOUT) -> None:

@@ -109,7 +109,10 @@ export const api = {
   stats: (id: string) => request<Stats>(`/api/servers/${id}/stats`),
   create: (body: { template_id: string; name: string; variables: Record<string, string> }) =>
     request<Server>("/api/servers", { method: "POST", body: JSON.stringify(body) }),
-  patch: (id: string, body: { variables?: Record<string, string>; startup_template?: string }) =>
+  patch: (
+    id: string,
+    body: { variables?: Record<string, string>; startup_template?: string; steam_branch?: string | null },
+  ) =>
     request<Server>(`/api/servers/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
   remove: (id: string) => request<null>(`/api/servers/${id}`, { method: "DELETE" }),
   action: (id: string, act: string, creds?: SteamCredentials) =>
