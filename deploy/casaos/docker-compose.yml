@@ -4,6 +4,7 @@
 # CasaOS no lee .env: reemplazá cada CAMBIAR_* antes de importar.
 #   - NAS_IP: la IP del NAS en tu red (ej. 192.168.1.10).
 #   - Secretos: cualquier string largo y aleatorio (PANEL_SECRET >= 32 chars).
+#     AGENT_TOKEN va dos veces (agent y backend) y tiene que ser el MISMO valor.
 #     python -c "import secrets;print(secrets.token_urlsafe(32))"
 #
 # Puertos: panel en NAS_IP:3128, API en NAS_IP:3129. Si cambiás el de la API,
@@ -25,7 +26,7 @@ services:
         source: /DATA/AppData/steamcmd-manager/postgres
         target: /var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U steam"]
+      test: ["CMD-SHELL", "pg_isready -U steam -d steammanager"]
       interval: 5s
       timeout: 5s
       retries: 10

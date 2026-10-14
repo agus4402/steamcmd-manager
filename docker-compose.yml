@@ -14,7 +14,7 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-steam}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-steam} -d ${POSTGRES_DB:-steammanager}"]
       interval: 5s
       timeout: 5s
       retries: 10

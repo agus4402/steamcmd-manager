@@ -19,3 +19,6 @@ npm-debug.log*
 .DS_Store
 .superpowers/
 *.tsbuildinfo
+
+# Filled-in deploy files (real secrets)
+deploy/**/*copy*
