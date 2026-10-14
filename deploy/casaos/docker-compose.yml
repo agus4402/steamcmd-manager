@@ -6,7 +6,7 @@
 #   - Secretos: cualquier string largo y aleatorio (PANEL_SECRET >= 32 chars).
 #     python -c "import secrets;print(secrets.token_urlsafe(32))"
 #
-# El panel abre en http://NAS_IP:3000 y le habla al backend en NAS_IP:8080, así
+# El panel abre en http://NAS_IP:3128 y le habla al backend en NAS_IP:8080, así
 # que ese puerto no se puede cambiar. Los datos quedan en
 # /DATA/AppData/steamcmd-manager. Las imágenes de GHCR tienen que ser públicas.
 
@@ -72,7 +72,7 @@ services:
       PORT_POOL_END: "27200"
       AGENT_URL: http://agent:8001
       AGENT_TOKEN: CAMBIAR_AGENT_TOKEN
-      FRONTEND_ORIGIN: http://CAMBIAR_NAS_IP:3000
+      FRONTEND_ORIGIN: http://CAMBIAR_NAS_IP:3128
       STEAM_API_KEY: ""
     ports:
       - target: 8000
@@ -90,7 +90,7 @@ services:
       - backend
     ports:
       - target: 3000
-        published: "3000"
+        published: "3128"
         protocol: tcp
     networks:
       - panel
@@ -123,6 +123,6 @@ x-casaos:
     en_us: Install and manage SteamCMD dedicated game servers (Project Zomboid, Valheim, 7 Days to Die...) from a web panel.
   title:
     en_us: SteamCMD Manager
-  port_map: "3000"
+  port_map: "3128"
   scheme: http
   index: /
