@@ -316,20 +316,39 @@ class DockerOrchestrator:
 
     # -- backups / volume ops -------------------------------------------------
 
+    @staticmethod
+    def _helper_image(as_game_user: bool) -> dict[str, object]:
+        """Image/user for a helper container.
+
+        Helpers drop every capability, so root inside them can NOT write into the
+        game's directories (owned by uid 1000, mode 755) nor chown what it
+        creates. Anything that modifies a server's /data therefore runs as the
+        game user, on the gameserver image: when an empty volume is first mounted
+        at its /data, Docker seeds it with that image's steam-owned /data, so even
+        fresh volumes (clones) are writable. `env` replaces the image's entrypoint
+        so the command runs as given.
+        """
+        if as_game_user:
+            return {
+                "image": settings.gameserver_image,
+                "user": GAME_USER,
+                "entrypoint": ["env"],
+            }
+        return {"image": settings.helper_image}
+
     def _run_helper(
         self,
         command: list[str],
         volumes: dict[str, dict[str, str]],
         *,
-        user: str | None = None,
+        as_game_user: bool = False,
         raw: bool = False,
     ) -> str | bytes:
         """Run a one-shot, network-less, unprivileged helper container for volume
         work (tar/copy). Returns its stdout (bytes when `raw`); raises DockerError
-        on failure."""
+        on failure. Use `as_game_user` for anything that writes a server's /data."""
         try:
             out = self.client.containers.run(
-                image=settings.helper_image,
                 command=command,
                 volumes=volumes,
                 remove=True,
@@ -338,7 +357,7 @@ class DockerOrchestrator:
                 security_opt=["no-new-privileges:true"],
                 stdout=True,
                 stderr=False if raw else True,
-                **({"user": user} if user else {}),
+                **self._helper_image(as_game_user),
             )
         except ContainerError as exc:
             detail = exc.stderr.decode("utf-8", "replace") if isinstance(exc.stderr, bytes) else exc.stderr
@@ -379,7 +398,7 @@ class DockerOrchestrator:
                 "-exec stat -c '%F|%s|%Y|%n' {} +",
             ],
             {self.data_volume(server_id): {"bind": "/data", "mode": "ro"}},
-            user=GAME_USER,
+            as_game_user=True,
         )
         entries: list[FileEntry] = []
         for line in str(out).splitlines():
@@ -410,7 +429,7 @@ class DockerOrchestrator:
                 f"echo ok $(stat -c %Y '{target}'); cat '{target}'",
             ],
             {self.data_volume(server_id): {"bind": "/data", "mode": "ro"}},
-            user=GAME_USER,
+            as_game_user=True,
             raw=True,
         )
         assert isinstance(out, bytes)
@@ -450,11 +469,10 @@ class DockerOrchestrator:
         helper = None
         try:
             helper = self.client.containers.create(
-                image=settings.helper_image,
                 command=["sh", "-c", script],
                 volumes={self.data_volume(server_id): {"bind": "/data", "mode": "rw"}},
-                user=GAME_USER,
                 network_mode="none",
+                **self._helper_image(as_game_user=True),
                 cap_drop=["ALL"],
                 security_opt=["no-new-privileges:true"],
             )
@@ -536,12 +554,15 @@ class DockerOrchestrator:
             f"test -f '{archive}' || {{ echo 'snapshot not found' >&2; exit 2; }}; "
             f"rm -rf /data/* /data/.[!.]* 2>/dev/null; tar xzf '{archive}' -C /data",
         ]
+        # As the game user: files end up owned by it (root here couldn't delete
+        # the game's files, and couldn't chown what it extracts).
         self._run_helper(
             cmd,
             {
                 self.data_volume(server_id): {"bind": "/data", "mode": "rw"},
                 settings.backups_volume: {"bind": "/backups", "mode": "ro"},
             },
+            as_game_user=True,
         )
         logger.info("restored snapshot %s into %s", snapshot_id, server_id)
 
@@ -558,12 +579,16 @@ class DockerOrchestrator:
         """Copy the contents of one server's data volume into another's (clone)."""
         self.ensure_volume(self.data_volume(src_server_id))
         self.ensure_volume(self.data_volume(dst_server_id))
+        # Destination at /data as the game user: a fresh volume gets the image's
+        # steam-owned /data, and copies stay owned by the game (no ownership
+        # preserve needed, which an unprivileged helper couldn't do anyway).
         self._run_helper(
-            ["sh", "-c", "cp -a /from/. /to/ 2>/dev/null || true"],
+            ["sh", "-c", "cp -R --preserve=mode,timestamps /from/. /data/"],
             {
                 self.data_volume(src_server_id): {"bind": "/from", "mode": "ro"},
-                self.data_volume(dst_server_id): {"bind": "/to", "mode": "rw"},
+                self.data_volume(dst_server_id): {"bind": "/data", "mode": "rw"},
             },
+            as_game_user=True,
         )
 
     def _purge_backups(self, server_id: str) -> None:
@@ -642,6 +667,7 @@ class DockerOrchestrator:
         self._run_helper(
             ["sh", "-c", f"rm -rf '{target}'"],
             {self.data_volume(server_id): {"bind": "/data", "mode": "rw"}},
+            as_game_user=True,
         )
 
     def list_workshop_items(self, server_id: str, install_path: str) -> list[str]:
