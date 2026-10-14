@@ -30,6 +30,8 @@ class ConfigField:
     default: str | None = None
     # Written by the panel itself on every start (read-only in the form).
     managed: bool = False
+    # Where to change it instead: "variables[:VAR]", "workshop" or "network".
+    managed_by: str | None = None
     # Section added by a mod rather than the base game.
     mod: bool = False
 

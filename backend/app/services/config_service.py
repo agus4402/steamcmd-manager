@@ -71,8 +71,17 @@ def _fields(spec: ConfigFileSpec | None, text: str) -> list[ConfigField] | None:
     if spec is None or spec.format == "text":
         return None
     if spec.format == "ini":
-        return ini.parse(text, set(spec.managed_keys))
+        return ini.parse(text, spec.managed_keys)
     return pz_sandbox.parse(text)
+
+
+def _where(f: ConfigField) -> str:
+    kind, _, var = (f.managed_by or "variables").partition(":")
+    if kind == "workshop":
+        return "Workshop → Load order"
+    if kind == "network":
+        return "the server's ports (Network)"
+    return f"Config → Variables ({var})" if var else "Config → Variables"
 
 
 def _apply(spec: ConfigFileSpec, text: str, changes: dict[str, str]) -> str:
@@ -83,9 +92,7 @@ def _apply(spec: ConfigFileSpec, text: str, changes: dict[str, str]) -> str:
         if f is None:
             raise ConfigError(f"unknown setting: {path}")
         if f.managed:
-            raise ConfigError(
-                f"{path} is managed by the panel; change it in Config → Variables instead"
-            )
+            raise ConfigError(f"{path} is managed by the panel; change it in {_where(f)} instead")
         try:
             clean[path] = validate_value(f, value)
         except ValueError as exc:

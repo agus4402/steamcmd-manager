@@ -29,10 +29,12 @@ def _changed_lines(before: str, after: str) -> list[str]:
 
 
 def test_ini_parse_descriptions_types_managed():
-    fields = {f.path: f for f in ini.parse(INI, {"PVP"})}
+    fields = {f.path: f for f in ini.parse(INI, {"PVP": "variables:PVP", "Mods": "workshop"})}
     assert fields["PauseEmpty"].type == "bool"
     assert fields["PauseEmpty"].description == "Game time stops when there are no players online"
     assert fields["PVP"].managed and not fields["PauseEmpty"].managed
+    assert fields["PVP"].managed_by == "variables:PVP"
+    assert fields["Mods"].managed_by == "workshop"
     assert fields["MaxPlayers"].type == "int"
 
 
@@ -137,3 +139,12 @@ def test_whitelist():
     ]:
         with pytest.raises(config_service.NotAllowed):
             config_service.check_allowed(t, bad)
+
+
+def test_managed_keys_list_means_variables_and_where_is_validated():
+    from app.schemas.template import ConfigFileSpec
+
+    spec = ConfigFileSpec(path="a/b.ini", label="B", format="ini", managed_keys=["X"])
+    assert spec.managed_keys == {"X": "variables"}
+    with pytest.raises(ValueError):
+        ConfigFileSpec(path="a/b.ini", label="B", managed_keys={"X": "somewhere"})

@@ -314,6 +314,8 @@ export interface ConfigField {
   default: string | null;
   /** Written by the panel on every start — read-only here. */
   managed: boolean;
+  /** Where to change it instead: "variables[:VAR]", "workshop" or "network". */
+  managed_by: string | null;
   /** Section added by a mod. */
   mod: boolean;
 }

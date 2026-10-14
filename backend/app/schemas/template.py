@@ -13,6 +13,8 @@ PLACEHOLDER_RE = re.compile(r"\{\{\s*([A-Za-z0-9_]+)\s*\}\}")
 TOKEN_RE = re.compile(r"^[A-Za-z0-9_]+$")
 # Steam beta branch names (passed to steamcmd as `-beta <name>`).
 BRANCH_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
+# Where a panel-managed config key is edited (see ConfigFileSpec.managed_keys).
+MANAGED_BY_RE = re.compile(r"^(variables(:[A-Za-z0-9_]+)?|workshop|network)$")
 # One printable console line (no newlines/control chars), e.g. "quit".
 STOP_COMMAND_RE = re.compile(r"^[ -~]{1,128}$")
 
@@ -116,13 +118,29 @@ class ConfigFileSpec(BaseModel):
     # ini: `Key=value` + `# description`; pz_sandbox: PZ SandboxVars.lua table;
     # text: raw editor only.
     format: Literal["ini", "pz_sandbox", "text"] = "text"
-    # Keys the panel writes itself on every start (read-only in the form).
-    managed_keys: list[str] = Field(default_factory=list)
+    # Keys the panel writes itself on every start (read-only in the form), each
+    # with where the user changes it instead: "variables:<VAR>", "variables",
+    # "workshop" (mods / load order) or "network" (ports). A plain list means
+    # "variables" for all of them.
+    managed_keys: dict[str, str] = Field(default_factory=dict)
 
     @field_validator("path")
     @classmethod
     def _valid_path(cls, v: str) -> str:
         return _safe_rel_path(v, "config file path")
+
+    @field_validator("managed_keys", mode="before")
+    @classmethod
+    def _valid_managed(cls, v: object) -> object:
+        if isinstance(v, list):
+            v = {k: "variables" for k in v}
+        if isinstance(v, dict):
+            for key, where in v.items():
+                if not MANAGED_BY_RE.match(str(where)):
+                    raise ValueError(
+                        f"managed_keys.{key}: '{where}' must be variables[:VAR], workshop or network"
+                    )
+        return v
 
 
 class GameTemplate(BaseModel):

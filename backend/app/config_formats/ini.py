@@ -20,7 +20,10 @@ def _split_lines(text: str) -> tuple[list[str], str]:
     return text.split(newline), newline
 
 
-def parse(text: str, managed: set[str] | frozenset[str] = frozenset()) -> list[ConfigField]:
+def parse(text: str, managed: dict[str, str] | None = None) -> list[ConfigField]:
+    """Fields of the file; `managed` maps panel-managed keys to where they're
+    edited instead (see ConfigFileSpec.managed_keys)."""
+    managed = managed or {}
     lines, _ = _split_lines(text)
     fields: list[ConfigField] = []
     comments: list[str] = []
@@ -40,6 +43,7 @@ def parse(text: str, managed: set[str] | frozenset[str] = frozenset()) -> list[C
                     type=infer_type(value),
                     description=" ".join(c for c in comments if c) or None,
                     managed=key in managed,
+                    managed_by=managed.get(key),
                 )
             )
         comments = []

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import useSWR from "swr";
 import { Code2, Lock, RotateCcw, Search } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
@@ -178,6 +179,7 @@ export function StructuredEditor({
             <div className="divide-y divide-border">
               {list.map((f) => (
                 <FieldRow
+                  serverId={serverId}
                   key={f.path}
                   field={f}
                   value={edits[f.path] ?? f.value}
@@ -211,11 +213,13 @@ export function StructuredEditor({
 }
 
 function FieldRow({
+  serverId,
   field: f,
   value,
   onChange,
   onReset,
 }: {
+  serverId: string;
   field: ConfigField;
   value: string;
   onChange: (v: string) => void;
@@ -273,11 +277,7 @@ function FieldRow({
         <label htmlFor={id} className="flex flex-wrap items-center gap-2 text-sm font-medium">
           <span className="font-mono">{key}</span>
           {modified && <Badge variant="warning">modified</Badge>}
-          {f.managed && (
-            <span className="inline-flex items-center gap-1 text-xs font-normal text-muted-foreground">
-              <Lock className="size-3" /> Managed by the panel (Variables)
-            </span>
-          )}
+          {f.managed && <ManagedBy serverId={serverId} where={f.managed_by} />}
         </label>
         {f.description && <p className="mt-0.5 text-xs text-muted-foreground">{f.description}</p>}
         {(defaultLabel || f.min != null) && (
@@ -297,5 +297,27 @@ function FieldRow({
         )}
       </div>
     </div>
+  );
+}
+
+/** "Managed by the panel" note linking to where the value is actually edited. */
+function ManagedBy({ serverId, where }: { serverId: string; where: string | null }) {
+  const [kind, variable] = (where ?? "variables").split(":");
+  const target =
+    kind === "workshop"
+      ? { href: `/servers/${serverId}/workshop`, label: "Workshop → Load order" }
+      : kind === "network"
+        ? { href: `/servers/${serverId}/network`, label: "the server's ports (Network)" }
+        : {
+            href: `/servers/${serverId}/config?file=variables`,
+            label: variable ? `Variables → ${variable}` : "Variables",
+          };
+  return (
+    <span className="inline-flex items-center gap-1 text-xs font-normal text-muted-foreground">
+      <Lock className="size-3" /> Managed by the panel ·
+      <Link href={target.href} className="text-info hover:underline">
+        {target.label}
+      </Link>
+    </span>
   );
 }

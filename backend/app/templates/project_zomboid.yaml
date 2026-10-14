@@ -67,8 +67,19 @@ config_files:
   - path: Zomboid/Server/pzserver.ini
     label: Server
     format: ini
-    managed_keys: [PublicName, Password, Public, PVP, MaxPlayers, DefaultPort, UDPPort,
-                   RCONPort, RCONPassword, WorkshopItems, Mods, Map]
+    managed_keys:
+      PublicName: variables:PUBLIC_NAME
+      Password: variables:SERVER_PASSWORD
+      Public: variables:PUBLIC
+      PVP: variables:PVP
+      MaxPlayers: variables:MAX_PLAYERS
+      RCONPassword: variables:RCON_PASSWORD
+      DefaultPort: network
+      UDPPort: network
+      RCONPort: network
+      WorkshopItems: workshop
+      Mods: workshop
+      Map: workshop
   - path: Zomboid/Server/pzserver_SandboxVars.lua
     label: Sandbox
     format: pz_sandbox
