@@ -82,11 +82,14 @@ async def claim_exchange(code: str) -> str | None:
 
 # -- authenticated (agent-key secret) -----------------------------------------
 
-# A self-managed agent creates tunnels with a themed tunnel_type (the API
+# A self-managed agent must create tunnels with a themed tunnel_type (the API
 # rejects type-less custom tunnels with "TunnelTypeRequiresDescription"). The
-# type only selects the protocol family + a default public allocation — it does
-# not restrict traffic — so we map the chosen protocol to a neutral type.
-_TUNNEL_TYPE = {"tcp": "minecraft-java", "udp": "minecraft-bedrock"}
+# type DOES matter: playit filters traffic per game profile — a
+# "minecraft-bedrock" UDP tunnel only passes Bedrock/RakNet pings (verified:
+# Steam queries and arbitrary datagrams were dropped). Templates can pick the
+# game's own profile per port (e.g. "project-zomboid"); otherwise UDP uses
+# "valheim", which passed arbitrary UDP in testing (it reserves 2 ports).
+_TUNNEL_TYPE = {"tcp": "minecraft-java", "udp": "valheim"}
 
 
 def _public_address(tunnel: dict) -> str | None:
@@ -115,7 +118,9 @@ class PlayitApi:
         aid = rd.get("agent_id")
         return f"agent {aid[:8]}" if aid else None
 
-    async def create_tunnel(self, local_port: int, protocol: str, name: str) -> dict:
+    async def create_tunnel(
+        self, local_port: int, protocol: str, name: str, tunnel_type: str | None = None
+    ) -> dict:
         rd = await self.rundata()
         agent_id = rd.get("agent_id")
         if not agent_id:
@@ -124,7 +129,7 @@ class PlayitApi:
             "/tunnels/create",
             {
                 "name": name,
-                "tunnel_type": _TUNNEL_TYPE.get(protocol, "minecraft-java"),
+                "tunnel_type": tunnel_type or _TUNNEL_TYPE.get(protocol, "minecraft-java"),
                 "port_type": protocol,
                 "port_count": 1,
                 "origin": {

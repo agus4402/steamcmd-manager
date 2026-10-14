@@ -51,6 +51,9 @@ class TunnelSpec:
     local_port: int
     protocol: str
     name: str
+    # Game-specific provider profile from the template port (e.g. playit's
+    # "project-zomboid"); None = provider default.
+    profile: str | None = None
 
 
 @dataclass(slots=True)

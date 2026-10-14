@@ -25,6 +25,11 @@ class PortSpec(BaseModel):
     # port+1 for the UDP query port). The allocator reserves a contiguous block;
     # only the base port is exposed as the {{PORT_<name>}} placeholder.
     count: int = Field(default=1, ge=1, le=8)
+    # Tunnel provider profile for exposing this port (playit "tunnel_type",
+    # e.g. "project-zomboid"). Game profiles let the provider pass the game's
+    # traffic and reserve the right number of ports; without one the panel uses
+    # a generic default.
+    tunnel_profile: str | None = Field(default=None, pattern=r"^[a-z0-9-]{1,32}$")
 
     @field_validator("name")
     @classmethod

@@ -124,3 +124,10 @@ def test_pz_template_lifecycle():
     assert t.stop_command == "quit" and t.stop_timeout >= 60
     assert t.prestart_hook == "project_zomboid"
     assert "legacy41" in t.branches
+
+
+def test_pz_game_port_uses_playit_zomboid_profile():
+    game = next(p for p in get_template("project_zomboid").ports if p.name == "game")
+    assert game.tunnel_profile == "project-zomboid" and game.protocol == "udp"
+    with pytest.raises(ValidationError):
+        _tpl(ports=[{"name": "g", "protocol": "udp", "default": 1, "tunnel_profile": "Bad Profile"}])

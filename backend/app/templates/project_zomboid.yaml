@@ -15,6 +15,9 @@ ports:
     protocol: udp
     default: 16261
     count: 2
+    # playit's Project Zomboid profile: reserves 2 public UDP ports (Steam
+    # connection + RakNet) and passes PZ traffic. Generic/Bedrock tunnels drop it.
+    tunnel_profile: project-zomboid
   # Source RCON (TCP), for external admin tools. Password = RCON_PASSWORD.
   - name: rcon
     protocol: tcp

@@ -153,7 +153,9 @@ class PlayitProvider(IntegrationProvider):
             raise RuntimeError("Playit is not connected")
         await self._ensure_running(integration, secret)
         try:
-            data = await PlayitApi(secret).create_tunnel(spec.local_port, spec.protocol, spec.name)
+            data = await PlayitApi(secret).create_tunnel(
+                spec.local_port, spec.protocol, spec.name, tunnel_type=spec.profile
+            )
         except PlayitApiError as exc:
             return TunnelResult(
                 external_id=None,

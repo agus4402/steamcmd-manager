@@ -26,6 +26,7 @@ from app.models.integration import (
     TunnelStatus,
 )
 from app.models.server import Server
+from app.services.template_loader import get_template
 
 logger = logging.getLogger("steamcmd-manager.integrations")
 
@@ -288,6 +289,26 @@ async def create_tunnel(
     return tunnel
 
 
+async def _tunnel_profile(session: AsyncSession, tunnel: IntegrationTunnel) -> str | None:
+    """The template's tunnel profile for the server port this tunnel exposes."""
+    if tunnel.server_id is None:
+        return None
+    server = await session.get(Server, tunnel.server_id)
+    if server is None:
+        return None
+    try:
+        template = get_template(server.template_id)
+    except Exception:  # noqa: BLE001 — unknown/removed template: provider default
+        return None
+    names = {
+        p.name for p in server.ports if p.host_port == tunnel.local_port and p.is_primary
+    }
+    for spec in template.ports:
+        if spec.name in names and tunnel.protocol in spec.protocols():
+            return spec.tunnel_profile
+    return None
+
+
 async def _provision_tunnel_job(integration_id: str, tunnel_id: str) -> None:
     async with SessionLocal() as session:
         integration = await get_integration(session, integration_id)
@@ -302,6 +323,7 @@ async def _provision_tunnel_job(integration_id: str, tunnel_id: str) -> None:
             local_port=tunnel.local_port,
             protocol=tunnel.protocol,
             name=tunnel.name,
+            profile=await _tunnel_profile(session, tunnel),
         )
         try:
             result = await provider.create_tunnel(session, integration, spec)
