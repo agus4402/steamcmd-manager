@@ -9,6 +9,9 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@codemirror/language": "6.10.8",
+    "@codemirror/legacy-modes": "6.4.2",
+    "@uiw/react-codemirror": "4.23.7",
     "@xterm/addon-fit": "0.10.0",
     "@xterm/xterm": "5.5.0",
     "class-variance-authority": "^0.7.1",

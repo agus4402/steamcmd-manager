@@ -76,6 +76,13 @@ class SnapshotListResponse(BaseModel):
     snapshots: list[SnapshotResponse]
 
 
+class FileEntryResponse(BaseModel):
+    path: str
+    type: str
+    size: int
+    mtime: int
+
+
 # -- integrations: playit (data-plane only) -----------------------------------
 
 

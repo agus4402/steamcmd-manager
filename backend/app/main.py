@@ -13,6 +13,7 @@ from app.config import get_settings, verify_secrets
 from app.db import SessionLocal, engine
 from app.routers import (
     auth,
+    config_files,
     console_ws,
     integrations,
     notifications,
@@ -95,6 +96,7 @@ app.include_router(schedule.router, dependencies=[Depends(require_user)])
 app.include_router(notifications.router, dependencies=[Depends(require_user)])
 app.include_router(workshop.router, dependencies=[Depends(require_user)])
 app.include_router(workshop.catalog_router, dependencies=[Depends(require_user)])
+app.include_router(config_files.router, dependencies=[Depends(require_user)])
 # WebSocket validates its token from the query string (see console_ws).
 app.include_router(console_ws.router)
 

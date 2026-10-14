@@ -63,6 +63,8 @@ Top-level (`GameTemplate`):
 | `stop_timeout` | int 5–600 | `30` | Seconds to wait for `stop_command` before forcing the stop. Big worlds need more (PZ uses 120). |
 | `prestart_hook` | str\|null | `null` | Name of a script baked into the gameserver image at `docker/gameserver/hooks/<name>.sh`, run right before launch. See [Prestart hooks](#prestart-hooks). |
 | `branches` | list[str] | `[]` | Steam beta branches suggested in the server's Settings → Steam branch (e.g. `legacy41`). Any valid branch can still be typed. |
+| `config_files` | list | `[]` | Game config files shown as sub-tabs of the server's **Config** tab. See ConfigFileSpec + [Config editor](#config-editor). |
+| `config_dirs` | list[str] | `[]` | Data-dir folders browsable/editable raw in Config → Files (e.g. where mods keep their configs). |
 
 PortSpec (each `ports` entry):
 
@@ -139,6 +141,25 @@ workshop:
 
 > Changing the gameserver **entrypoint** (workshop mode) requires rebuilding the
 > `steamcmd-manager/gameserver` image — it is not rebuilt by `docker compose build`.
+
+ConfigFileSpec (each `config_files` entry):
+
+| Field | Type | Default | Notes |
+|-------|------|---------|-------|
+| `path` | str | — | Relative to the data dir (safe relative path). Usually only exists after the first start. |
+| `label` | str | — | Sub-tab name. |
+| `format` | `ini`\|`pz_sandbox`\|`text` | `text` | `ini`: `Key=value` with `# description` lines → form. `pz_sandbox`: PZ `SandboxVars.lua` → form with enums/ranges, mod tables as sections. `text`: raw editor only. |
+| `managed_keys` | list[str] | `[]` | Keys a prestart hook rewrites every start; shown read-only in the form (edit them via Variables). |
+
+## Config editor
+
+`config_files` + `config_dirs` are the **whitelist** of what the panel may read/write
+in the server's data dir — nothing else is reachable from the Config tab. Structured
+formats edit values in place (comments/order preserved); every save keeps the previous
+version as `<file>.panel-bak` ("Restore previous version"). On a running server the UI
+offers **Save & restart** (graceful stop → write → start) so the game can't overwrite
+the edit on shutdown. If a key is also written by your prestart hook, list it in
+`managed_keys`.
 
 ## Persistence
 

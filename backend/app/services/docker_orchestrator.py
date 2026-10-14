@@ -39,6 +39,14 @@ class ContainerState:
 
 
 @dataclass(slots=True)
+class FileEntry:
+    path: str  # relative to the server's data dir
+    type: str  # "file" | "dir"
+    size: int
+    mtime: int
+
+
+@dataclass(slots=True)
 class SnapshotInfo:
     id: str
     created_at: str
@@ -275,6 +283,36 @@ class DockerOrchestrator:
         except httpx.HTTPError as exc:
             logger.info("follow_logs stream ended for %s: %s", server_id, exc)
             return
+
+    # -- data-volume files (config editor) -------------------------------------
+
+    def list_files(self, server_id: str, path: str, depth: int = 1) -> list[FileEntry]:
+        resp = self._request(
+            "GET", f"/servers/{server_id}/files", params={"path": path, "depth": depth}
+        )
+        return [FileEntry(**e) for e in resp.json()]
+
+    def read_file(self, server_id: str, path: str) -> tuple[bytes, int] | None:
+        """(content, mtime), or None when the file doesn't exist."""
+        try:
+            resp = self._request(
+                "GET", f"/servers/{server_id}/files/content", params={"path": path}
+            )
+        except DockerError as exc:
+            if "agent error 404" in str(exc):
+                return None
+            raise
+        return resp.content, int(resp.headers.get("X-Mtime", "0"))
+
+    def write_file(self, server_id: str, path: str, content: bytes) -> int:
+        resp = self._request(
+            "PUT",
+            f"/servers/{server_id}/files/content",
+            params={"path": path},
+            content=content,
+            timeout=_BACKUP_TIMEOUT,
+        )
+        return int(resp.json()["mtime"])
 
     def send_stdin(self, server_id: str, data: str) -> None:
         self._request("POST", f"/servers/{server_id}/stdin", json={"data": data})

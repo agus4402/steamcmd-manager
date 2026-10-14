@@ -87,6 +87,29 @@ class WorkshopSpec(BaseModel):
         return v.strip("/")
 
 
+def _safe_rel_path(v: str, what: str) -> str:
+    if ".." in v.split("/") or v.startswith("/") or not WORKSHOP_PATH_RE.match(v):
+        raise ValueError(f"{what} '{v}' is not a safe relative path")
+    return v.strip("/")
+
+
+class ConfigFileSpec(BaseModel):
+    """A game config file shown in the panel's Config editor."""
+
+    path: str  # relative to the data dir
+    label: str
+    # ini: `Key=value` + `# description`; pz_sandbox: PZ SandboxVars.lua table;
+    # text: raw editor only.
+    format: Literal["ini", "pz_sandbox", "text"] = "text"
+    # Keys the panel writes itself on every start (read-only in the form).
+    managed_keys: list[str] = Field(default_factory=list)
+
+    @field_validator("path")
+    @classmethod
+    def _valid_path(cls, v: str) -> str:
+        return _safe_rel_path(v, "config file path")
+
+
 class GameTemplate(BaseModel):
     id: str
     name: str
@@ -121,6 +144,16 @@ class GameTemplate(BaseModel):
     prestart_hook: str | None = None
     # Steam beta branches offered as suggestions in the UI (e.g. "legacy41").
     branches: list[str] = Field(default_factory=list)
+    # Config editor: declared files (structured or raw) and directories whose
+    # files can be browsed/edited raw (e.g. mods' own configs). This list is the
+    # whitelist of what the panel may read/write in the data dir.
+    config_files: list[ConfigFileSpec] = Field(default_factory=list)
+    config_dirs: list[str] = Field(default_factory=list)
+
+    @field_validator("config_dirs")
+    @classmethod
+    def _valid_config_dirs(cls, v: list[str]) -> list[str]:
+        return [_safe_rel_path(d, "config dir") for d in v]
 
     @field_validator("stop_command")
     @classmethod

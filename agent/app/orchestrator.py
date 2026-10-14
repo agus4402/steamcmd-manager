@@ -11,9 +11,12 @@ and resource limits — so a compromised game server cannot escalate.
 
 from __future__ import annotations
 
+import io
 import logging
 import re
 import secrets
+import tarfile
+import time
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -37,6 +40,10 @@ INSTALL_PREFIX = "gs-install-"
 
 DEFAULT_STOP_TIMEOUT = 30
 
+# Config editor: files are read/written as the game's user, up to this size.
+GAME_USER = "1000:1000"
+MAX_FILE_BYTES = 2 * 1024 * 1024
+
 # Snapshot ids look like "snap-20260618-143015-a1b2" (timestamp + random suffix).
 SNAPSHOT_ID_RE = re.compile(r"^snap-\d{8}-\d{6}-[0-9a-f]{4}$")
 
@@ -59,6 +66,14 @@ class ContainerState:
     exists: bool
     status: str
     exit_code: int | None = None
+
+
+@dataclass(slots=True)
+class FileEntry:
+    path: str  # relative to the data volume root
+    type: str  # "file" | "dir"
+    size: int
+    mtime: int
 
 
 @dataclass(slots=True)
@@ -301,9 +316,17 @@ class DockerOrchestrator:
 
     # -- backups / volume ops -------------------------------------------------
 
-    def _run_helper(self, command: list[str], volumes: dict[str, dict[str, str]]) -> str:
+    def _run_helper(
+        self,
+        command: list[str],
+        volumes: dict[str, dict[str, str]],
+        *,
+        user: str | None = None,
+        raw: bool = False,
+    ) -> str | bytes:
         """Run a one-shot, network-less, unprivileged helper container for volume
-        work (tar/copy). Returns its stdout; raises DockerError on failure."""
+        work (tar/copy). Returns its stdout (bytes when `raw`); raises DockerError
+        on failure."""
         try:
             out = self.client.containers.run(
                 image=settings.helper_image,
@@ -314,14 +337,129 @@ class DockerOrchestrator:
                 cap_drop=["ALL"],
                 security_opt=["no-new-privileges:true"],
                 stdout=True,
-                stderr=True,
+                stderr=False if raw else True,
+                **({"user": user} if user else {}),
             )
         except ContainerError as exc:
             detail = exc.stderr.decode("utf-8", "replace") if isinstance(exc.stderr, bytes) else exc.stderr
             raise DockerError(f"volume helper failed: {detail or exc}") from exc
         except (APIError, ImageNotFound) as exc:  # noqa: BLE001
             raise DockerError(f"volume helper error: {exc}") from exc
+        if raw:
+            return bytes(out)
         return out.decode("utf-8", "replace") if isinstance(out, (bytes, bytearray)) else str(out)
+
+    # -- data-volume files (config editor) -------------------------------------
+    #
+    # Paths are relative to the server's /data and pre-validated by main.py
+    # (FILE_PATH_RE: no "..", no leading "/", no quotes). Helpers run as the
+    # game's user (uid 1000) so they can only touch what the game itself owns,
+    # and anything they create stays writable by the game.
+
+    def list_files(self, server_id: str, path: str, depth: int) -> list[FileEntry]:
+        target = f"/data/{path}".rstrip("/")
+        out = self._run_helper(
+            [
+                "sh",
+                "-c",
+                f"[ -d '{target}' ] || exit 0; "
+                f"find '{target}' -mindepth 1 -maxdepth {int(depth)} "
+                "\\( -type f -o -type d \\) -exec stat -c '%F|%s|%Y|%n' {} +",
+            ],
+            {self.data_volume(server_id): {"bind": "/data", "mode": "ro"}},
+            user=GAME_USER,
+        )
+        entries: list[FileEntry] = []
+        for line in str(out).splitlines():
+            parts = line.split("|", 3)
+            if len(parts) != 4 or not parts[3].startswith("/data/"):
+                continue
+            kind, size, mtime, name = parts
+            entries.append(
+                FileEntry(
+                    path=name[len("/data/"):],
+                    type="dir" if kind == "directory" else "file",
+                    size=int(size) if size.isdigit() else 0,
+                    mtime=int(mtime) if mtime.isdigit() else 0,
+                )
+            )
+        entries.sort(key=lambda e: e.path)
+        return entries
+
+    def read_file(self, server_id: str, path: str) -> tuple[bytes, int] | None:
+        """Return (content, mtime) or None if the file does not exist."""
+        target = f"/data/{path}"
+        out = self._run_helper(
+            [
+                "sh",
+                "-c",
+                f"[ -f '{target}' ] || {{ echo missing; exit 0; }}; "
+                f"[ $(stat -c %s '{target}') -le {MAX_FILE_BYTES} ] || {{ echo toolarge; exit 0; }}; "
+                f"echo ok $(stat -c %Y '{target}'); cat '{target}'",
+            ],
+            {self.data_volume(server_id): {"bind": "/data", "mode": "ro"}},
+            user=GAME_USER,
+            raw=True,
+        )
+        assert isinstance(out, bytes)
+        header, _, content = out.partition(b"\n")
+        if header == b"missing":
+            return None
+        if header == b"toolarge":
+            raise DockerError(f"file is larger than {MAX_FILE_BYTES} bytes")
+        _, _, mtime = header.decode().partition(" ")
+        return content, int(mtime) if mtime.isdigit() else 0
+
+    def write_file(self, server_id: str, path: str, content: bytes) -> int:
+        """Write a file (keeping the previous version as <file>.panel-bak) and
+        return its new mtime.
+
+        The content is uploaded into the helper's own /tmp (put_archive on the
+        not-yet-started container), then the helper copies it into place running
+        as the game user, so ownership and created parent dirs stay the game's.
+        """
+        if len(content) > MAX_FILE_BYTES:
+            raise DockerError(f"file is larger than {MAX_FILE_BYTES} bytes")
+        target = f"/data/{path}"
+        parent = target.rsplit("/", 1)[0]
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w") as tar:
+            info = tarfile.TarInfo(name="panel-upload")
+            info.size = len(content)
+            info.mode = 0o644
+            info.uid = info.gid = 1000
+            info.mtime = int(time.time())
+            tar.addfile(info, io.BytesIO(content))
+        script = (
+            f"mkdir -p '{parent}' && "
+            f"{{ [ ! -f '{target}' ] || cp -p '{target}' '{target}.panel-bak'; }} && "
+            f"cat /tmp/panel-upload > '{target}' && stat -c %Y '{target}'"
+        )
+        helper = None
+        try:
+            helper = self.client.containers.create(
+                image=settings.helper_image,
+                command=["sh", "-c", script],
+                volumes={self.data_volume(server_id): {"bind": "/data", "mode": "rw"}},
+                user=GAME_USER,
+                network_mode="none",
+                cap_drop=["ALL"],
+                security_opt=["no-new-privileges:true"],
+            )
+            if not helper.put_archive("/tmp", buf.getvalue()):
+                raise DockerError(f"could not upload {path}")
+            helper.start()
+            result = helper.wait(timeout=60)
+            logs = helper.logs(stdout=True, stderr=True).decode("utf-8", "replace").strip()
+            if result.get("StatusCode") != 0:
+                raise DockerError(f"could not write {path}: {logs}")
+        except (APIError, ImageNotFound, ReadTimeout) as exc:  # noqa: BLE001
+            raise DockerError(f"write failed: {exc}") from exc
+        finally:
+            if helper is not None:
+                helper.remove(force=True)
+        last = logs.splitlines()[-1] if logs else ""
+        return int(last) if last.isdigit() else info.mtime
 
     def create_snapshot(self, server_id: str) -> SnapshotInfo:
         """Tar the server's data volume into a new backup tarball."""

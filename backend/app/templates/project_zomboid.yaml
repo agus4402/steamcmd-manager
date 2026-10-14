@@ -58,6 +58,25 @@ stop_command: quit
 stop_timeout: 120
 branches:
   - legacy41
+# Config editor (Config tab). Files only exist after the first start. The
+# managed keys mirror what the prestart hook writes on every start.
+config_files:
+  - path: Zomboid/Server/pzserver.ini
+    label: Server
+    format: ini
+    managed_keys: [PublicName, Password, Public, PVP, MaxPlayers, DefaultPort, UDPPort,
+                   RCONPort, RCONPassword, WorkshopItems, Mods, Map]
+  - path: Zomboid/Server/pzserver_SandboxVars.lua
+    label: Sandbox
+    format: pz_sandbox
+  - path: Zomboid/Server/pzserver_spawnregions.lua
+    label: Spawn regions
+  - path: Zomboid/Server/pzserver_spawnpoints.lua
+    label: Spawn points
+# Browsable in the raw editor: server files + where mods keep their own configs.
+config_dirs:
+  - Zomboid/Server
+  - Zomboid/Lua
 # Steam Workshop: PZ's workshop content lives under the CLIENT app 108600 (not the
 # dedicated-server app 380870). Installed items are enabled automatically on the
 # next start (the prestart hook fills WorkshopItems=/Mods=/Map= from them).

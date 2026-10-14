@@ -19,6 +19,9 @@ import type {
   SearchResult,
   SyncResult,
   AutoUpdateMode,
+  ConfigFilesList,
+  ConfigFileContent,
+  ConfigWriteResult,
 } from "./types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
@@ -168,6 +171,28 @@ export const api = {
     request<WorkshopMod>(`/api/servers/${id}/mods`, {
       method: "POST",
       body: JSON.stringify({ item, name: name || null }),
+    }),
+  configFiles: (id: string) => request<ConfigFilesList>(`/api/servers/${id}/config/files`),
+  configFile: (id: string, path: string) =>
+    request<ConfigFileContent>(`/api/servers/${id}/config/file?path=${encodeURIComponent(path)}`),
+  writeConfigFile: (
+    id: string,
+    body: {
+      path: string;
+      content?: string;
+      changes?: Record<string, string>;
+      base_mtime?: number;
+      restart?: boolean;
+    },
+  ) =>
+    request<ConfigWriteResult>(`/api/servers/${id}/config/file`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  restoreConfigFile: (id: string, path: string, restart = false) =>
+    request<ConfigWriteResult>(`/api/servers/${id}/config/file/restore`, {
+      method: "POST",
+      body: JSON.stringify({ path, restart }),
     }),
   removeMod: (id: string, modId: string) =>
     request<null>(`/api/servers/${id}/mods/${modId}`, { method: "DELETE" }),

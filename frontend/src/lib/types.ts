@@ -272,3 +272,61 @@ export interface IntegrationTunnel {
   error_message: string | null;
   created_at: string;
 }
+
+// -- config editor ------------------------------------------------------------
+
+export type ConfigFormat = "ini" | "pz_sandbox" | "text";
+
+export interface ConfigFileInfo {
+  path: string;
+  label: string;
+  format: ConfigFormat;
+  exists: boolean;
+  size: number;
+  mtime: number;
+  has_backup: boolean;
+}
+
+export interface ConfigTreeEntry {
+  path: string;
+  type: "file" | "dir";
+  size: number;
+  mtime: number;
+  has_backup: boolean;
+}
+
+export interface ConfigFilesList {
+  files: ConfigFileInfo[];
+  tree: ConfigTreeEntry[];
+  dirs: string[];
+}
+
+export interface ConfigField {
+  path: string;
+  section: string;
+  value: string;
+  type: "bool" | "int" | "float" | "string";
+  description: string | null;
+  enum: { value: string; label: string }[];
+  min: number | null;
+  max: number | null;
+  default: string | null;
+  /** Written by the panel on every start — read-only here. */
+  managed: boolean;
+  /** Section added by a mod. */
+  mod: boolean;
+}
+
+export interface ConfigFileContent {
+  path: string;
+  content: string;
+  mtime: number;
+  format: ConfigFormat;
+  fields: ConfigField[] | null;
+}
+
+export interface ConfigWriteResult {
+  path: string;
+  mtime: number;
+  restarted: boolean;
+}

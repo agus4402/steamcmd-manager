@@ -12,8 +12,9 @@ from __future__ import annotations
 
 import re
 import secrets
+from dataclasses import asdict
 
-from fastapi import Depends, FastAPI, HTTPException, Path, status
+from fastapi import Depends, FastAPI, HTTPException, Path, Request, Response, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from starlette.concurrency import iterate_in_threadpool, run_in_threadpool
 from starlette.responses import StreamingResponse
@@ -24,6 +25,7 @@ from app.playit import playit
 from app.schemas import (
     CreateContainerRequest,
     CreateResponse,
+    FileEntryResponse,
     InstallRequest,
     InstallResultResponse,
     LogsResponse,
@@ -48,6 +50,10 @@ SERVER_ID_RE = re.compile(r"^[A-Za-z0-9]{1,32}$")
 PORT_BINDING_RE = re.compile(r"^(\d{1,5})/(tcp|udp)$")
 WORKSHOP_ITEM_RE = re.compile(r"^\d{1,20}$")
 WORKSHOP_PATH_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_./-]*$")
+# Data-volume file path for the config editor: relative, no "..", and no quote,
+# backslash or control chars (paths are single-quoted in helper shell commands).
+# Spaces/brackets are allowed — PZ mod folders use them.
+FILE_PATH_RE = re.compile(r"^[^'\\\x00-\x1f/][^'\\\x00-\x1f]{0,511}$")
 # One printable console line (no newlines/control chars), e.g. "quit".
 STOP_COMMAND_RE = re.compile(r"^[ -~]{1,128}$")
 
@@ -325,6 +331,56 @@ async def workshop_download(
     except DockerError as exc:
         raise _wrap(exc) from exc
     return InstallResultResponse(code=code, logs=logs)
+
+
+def valid_file_path(path: str) -> str:
+    if not FILE_PATH_RE.match(path) or ".." in path.split("/") or "//" in path:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid file path")
+    return path.rstrip("/")
+
+
+@app.get("/servers/{server_id}/files", dependencies=authed, response_model=list[FileEntryResponse])
+async def list_files(
+    path: str, depth: int = 1, server_id: str = Depends(valid_server_id)
+) -> list[FileEntryResponse]:
+    path = valid_file_path(path)
+    try:
+        entries = await run_in_threadpool(
+            orchestrator.list_files, server_id, path, max(1, min(depth, 4))
+        )
+    except DockerError as exc:
+        raise _wrap(exc) from exc
+    return [FileEntryResponse(**asdict(e)) for e in entries]
+
+
+@app.get("/servers/{server_id}/files/content", dependencies=authed)
+async def read_file(path: str, server_id: str = Depends(valid_server_id)) -> Response:
+    path = valid_file_path(path)
+    try:
+        result = await run_in_threadpool(orchestrator.read_file, server_id, path)
+    except DockerError as exc:
+        raise _wrap(exc) from exc
+    if result is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "file not found")
+    content, mtime = result
+    if b"\x00" in content:
+        raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, "not a text file")
+    return Response(content, media_type="application/octet-stream", headers={"X-Mtime": str(mtime)})
+
+
+@app.put("/servers/{server_id}/files/content", dependencies=authed)
+async def write_file(
+    request: Request, path: str, server_id: str = Depends(valid_server_id)
+) -> dict[str, int]:
+    path = valid_file_path(path)
+    content = await request.body()
+    if b"\x00" in content:
+        raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, "not a text file")
+    try:
+        mtime = await run_in_threadpool(orchestrator.write_file, server_id, path, content)
+    except DockerError as exc:
+        raise _wrap(exc) from exc
+    return {"mtime": mtime}
 
 
 @app.get("/servers/{server_id}/workshop/installed", dependencies=authed, response_model=list[str])
