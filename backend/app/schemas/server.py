@@ -103,6 +103,8 @@ class ServerUpdate(BaseModel):
     # Steam beta branch; "" or null resets to the public branch. Only applied
     # when the field is present in the request.
     steam_branch: str | None = Field(default=None, pattern=r"^([A-Za-z0-9_.-]{1,64})?$")
+    # Check for a game update (steamcmd, no validate) before each start.
+    update_on_start: bool | None = None
 
 
 class BackupConfigUpdate(BaseModel):

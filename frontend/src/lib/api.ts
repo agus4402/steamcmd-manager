@@ -53,6 +53,8 @@ const REQUEST_TIMEOUT_MS = 15000;
 // Volume operations (backup/restore/clone) tar or copy the whole data dir and
 // can legitimately run for many minutes — they get a much longer ceiling.
 const LONG_OP_TIMEOUT_MS = 20 * 60 * 1000;
+// Graceful stop (template stop_timeout ≤ 600s) + container recreate.
+const STOP_TIMEOUT_MS = 11 * 60 * 1000;
 
 async function request<T>(
   path: string,
@@ -115,15 +117,23 @@ export const api = {
     request<Server>("/api/servers", { method: "POST", body: JSON.stringify(body) }),
   patch: (
     id: string,
-    body: { variables?: Record<string, string>; startup_template?: string; steam_branch?: string | null },
+    body: {
+      variables?: Record<string, string>;
+      startup_template?: string;
+      steam_branch?: string | null;
+      update_on_start?: boolean;
+    },
   ) =>
     request<Server>(`/api/servers/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
   remove: (id: string) => request<null>(`/api/servers/${id}`, { method: "DELETE" }),
   action: (id: string, act: string, creds?: SteamCredentials) =>
-    request<Server>(`/api/servers/${id}/${act}`, {
-      method: "POST",
-      body: creds ? JSON.stringify(creds) : undefined,
-    }),
+    request<Server>(
+      `/api/servers/${id}/${act}`,
+      { method: "POST", body: creds ? JSON.stringify(creds) : undefined },
+      // Stop/restart wait for the game to save and exit (e.g. Project Zomboid's
+      // "quit", up to the template's stop_timeout) — longer than a normal call.
+      act === "stop" || act === "restart" ? STOP_TIMEOUT_MS : REQUEST_TIMEOUT_MS,
+    ),
   clone: (id: string, name: string) =>
     request<Server>(
       `/api/servers/${id}/clone`,
@@ -186,15 +196,17 @@ export const api = {
       restart?: boolean;
     },
   ) =>
-    request<ConfigWriteResult>(`/api/servers/${id}/config/file`, {
-      method: "PUT",
-      body: JSON.stringify(body),
-    }),
+    request<ConfigWriteResult>(
+      `/api/servers/${id}/config/file`,
+      { method: "PUT", body: JSON.stringify(body) },
+      body.restart ? STOP_TIMEOUT_MS : REQUEST_TIMEOUT_MS,
+    ),
   restoreConfigFile: (id: string, path: string, restart = false) =>
-    request<ConfigWriteResult>(`/api/servers/${id}/config/file/restore`, {
-      method: "POST",
-      body: JSON.stringify({ path, restart }),
-    }),
+    request<ConfigWriteResult>(
+      `/api/servers/${id}/config/file/restore`,
+      { method: "POST", body: JSON.stringify({ path, restart }) },
+      restart ? STOP_TIMEOUT_MS : REQUEST_TIMEOUT_MS,
+    ),
   loadOrder: (id: string) => request<LoadOrder>(`/api/servers/${id}/mods/load-order`),
   setLoadOrder: (id: string, order: { id: string; enabled: boolean }[]) =>
     request<LoadOrder>(`/api/servers/${id}/mods/load-order`, {

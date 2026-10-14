@@ -21,6 +21,7 @@ export default function ServerSettingsPage() {
   const [cloning, setCloning] = useState(false);
   const [branch, setBranch] = useState(server.steam_branch ?? "");
   const [savingBranch, setSavingBranch] = useState(false);
+  const [savingUpdate, setSavingUpdate] = useState(false);
   const { data: templates } = useSWR<Template[]>("templates", () => api.templates());
   const branchHints = templates?.find((t) => t.id === server.template_id)?.branches ?? [];
 
@@ -29,6 +30,19 @@ export default function ServerSettingsPage() {
   function reinstall() {
     if (!confirm("Reinstall this server? Its data volume will be wiped and the game re-downloaded.")) return;
     act(server, "reinstall");
+  }
+
+  async function toggleUpdateOnStart(enabled: boolean) {
+    setSavingUpdate(true);
+    try {
+      await api.patch(server.id, { update_on_start: enabled });
+      toast.success(enabled ? "Update on start enabled" : "Update on start disabled");
+      await mutate();
+    } catch (e) {
+      toast.error("Failed to save", { description: e instanceof ApiError ? e.message : String(e) });
+    } finally {
+      setSavingUpdate(false);
+    }
   }
 
   async function saveBranch() {
@@ -71,11 +85,16 @@ export default function ServerSettingsPage() {
           <div>
             <p className="text-sm font-medium">Update on start</p>
             <p className="text-xs text-muted-foreground">
-              Run a SteamCMD update before launching. Currently set by the template.
+              Check Steam for a new game version before each start (only downloads when there is
+              one). Turn off for faster starts; use Update to update manually. Restart never updates.
             </p>
           </div>
-          {/* Editing requires PATCH support for `update_on_start` (later phase). */}
-          <Switch checked={server.update_on_start} onCheckedChange={() => {}} disabled aria-label="Update on start" />
+          <Switch
+            checked={server.update_on_start}
+            onCheckedChange={toggleUpdateOnStart}
+            disabled={savingUpdate}
+            aria-label="Update on start"
+          />
         </CardContent>
       </Card>
 

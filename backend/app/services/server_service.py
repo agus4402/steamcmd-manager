@@ -287,9 +287,13 @@ def _base_steam_env(server: Server, creds: dict[str, str] | None) -> dict[str, s
     return env
 
 
-def build_install_env(server: Server, creds: dict[str, str] | None = None) -> dict[str, str]:
+def build_install_env(
+    server: Server, creds: dict[str, str] | None = None, *, validate: bool = True
+) -> dict[str, str]:
     env = _base_steam_env(server, creds)
-    env["VALIDATE"] = "1"
+    # validate re-checks every installed file (slow on big games); without it
+    # steamcmd only downloads when there is a newer build.
+    env["VALIDATE"] = "1" if validate else "0"
     return env
 
 
@@ -580,14 +584,16 @@ async def start_server(
 
         asyncio.create_task(workshop_service.run_auto_update(server.id, restart=False))
     if server.update_on_start:
-        # Download/validate first (shown as 'updating' + progress), then auto-start.
+        # Quick update check first (shown as 'updating' + progress), then
+        # auto-start. No validate here: re-hashing the whole install on every
+        # start is what made starts slow; the explicit Update action validates.
         server.status = ServerStatus.UPDATING.value
         server.error_message = None
         await session.commit()
         asyncio.create_task(
             _install_job(
                 server.id,
-                build_install_env(server, creds),
+                build_install_env(server, creds, validate=False),
                 ServerStatus.STOPPED,
                 then_start=True,
                 runtime_creds=creds,
@@ -635,6 +641,7 @@ async def patch_server(
     *,
     steam_branch: str | None = None,
     set_branch: bool = False,
+    update_on_start: bool | None = None,
 ) -> Server:
     if variables is not None:
         unknown = set(variables) - set(server.variables)
@@ -650,6 +657,8 @@ async def patch_server(
         server.startup_template = startup_template
     if set_branch:
         server.steam_branch = steam_branch or None
+    if update_on_start is not None:
+        server.update_on_start = update_on_start
     await session.commit()
     await session.refresh(server)
     return server

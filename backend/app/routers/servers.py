@@ -103,6 +103,7 @@ async def update_server_config(
             payload.startup_template,
             steam_branch=payload.steam_branch,
             set_branch="steam_branch" in payload.model_fields_set,
+            update_on_start=payload.update_on_start,
         )
     except server_service.ServerError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
