@@ -341,6 +341,7 @@ export default function ServerWorkshopPage() {
               className="h-8 rounded-md border border-border bg-background px-2 text-sm outline-none focus:border-primary"
             >
               <option value="disabled">Disabled</option>
+              <option value="15min">Every 15 min (restarts only on update)</option>
               <option value="daily">Daily</option>
               <option value="weekly">Weekly</option>
               <option value="startup">Every startup</option>

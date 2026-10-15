@@ -109,7 +109,7 @@ class ImportResult(BaseModel):
 
 # -- auto-update + sync -------------------------------------------------------
 
-AutoUpdateMode = Literal["disabled", "daily", "weekly", "startup"]
+AutoUpdateMode = Literal["disabled", "15min", "daily", "weekly", "startup"]
 
 
 class AutoUpdateRequest(BaseModel):

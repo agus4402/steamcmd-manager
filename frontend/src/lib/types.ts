@@ -129,7 +129,7 @@ export interface ImportResult {
   skipped: string[];
 }
 
-export type AutoUpdateMode = "disabled" | "daily" | "weekly" | "startup";
+export type AutoUpdateMode = "disabled" | "15min" | "daily" | "weekly" | "startup";
 
 export interface SyncResult {
   restored: number;

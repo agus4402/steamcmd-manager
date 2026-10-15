@@ -64,10 +64,10 @@ async def _load_all() -> None:
         ).scalars().all()
         for action in rows:
             _schedule_job(action)
-        # Workshop auto-update jobs (daily/weekly) live on the server row.
+        # Workshop auto-update jobs (cron modes) live on the server row.
         servers = (
             await session.execute(
-                select(Server).where(Server.workshop_auto_update.in_(("daily", "weekly")))
+                select(Server).where(Server.workshop_auto_update.in_(tuple(_WS_CRON)))
             )
         ).scalars().all()
         for server in servers:
@@ -116,7 +116,9 @@ def sync_action(action: ScheduledAction) -> None:
 
 _WS_JOB_PREFIX = "workshop-update:"
 # Fixed schedules (UTC) per auto-update mode; "startup" is handled at start time.
-_WS_CRON = {"daily": "0 4 * * *", "weekly": "0 4 * * 0"}
+# "15min" keeps the server on the same mod versions players get from Steam: a
+# check is cheap, and run_auto_update only restarts when something changed.
+_WS_CRON = {"15min": "*/15 * * * *", "daily": "0 4 * * *", "weekly": "0 4 * * 0"}
 
 
 def _ws_job_id(server_id: str) -> str:
