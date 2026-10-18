@@ -15,6 +15,8 @@ import {
   ArrowUpCircle,
   FolderSync,
   Info,
+  Search,
+  X,
 } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import {
@@ -75,8 +77,16 @@ export default function ServerWorkshopPage() {
   const [importOpen, setImportOpen] = useState(false);
 
   const [bulkBusy, setBulkBusy] = useState(false);
+  // Filters both the Installed grid and the Load order list.
+  const [query, setQuery] = useState("");
 
   const mods = data ?? [];
+  const q = query.trim().toLowerCase();
+  const filteredMods = q
+    ? mods.filter((m) =>
+        [m.name, m.title, m.item_id].some((v) => v?.toLowerCase().includes(q)),
+      )
+    : mods;
   const detailMod = mods.find((m) => m.item_id === detailItemId) ?? null;
   const installedIds = new Set(mods.map((m) => m.item_id));
   const updatesAvailable = mods.filter((m) => m.status === "update_available").length;
@@ -272,12 +282,36 @@ export default function ServerWorkshopPage() {
         ))}
       </div>
 
+      {tab !== "browse" && (
+        <div className="relative">
+          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => e.key === "Escape" && setQuery("")}
+            placeholder={tab === "order" ? "Search mods and maps…" : "Search installed mods…"}
+            aria-label="Search mods"
+            className="pl-9 pr-9"
+          />
+          {query && (
+            <button
+              onClick={() => setQuery("")}
+              className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground hover:text-foreground"
+              aria-label="Clear search"
+            >
+              <X className="size-4" />
+            </button>
+          )}
+        </div>
+      )}
+
       {tab === "order" && loadOrder?.supported ? (
         <LoadOrderList
           serverId={server.id}
           entries={loadOrder.entries}
           maps={loadOrder.maps}
           sandboxPath={sandboxPath}
+          query={query}
           onSaved={() => mutateLoadOrder()}
         />
       ) : tab === "browse" ? (
@@ -368,9 +402,15 @@ export default function ServerWorkshopPage() {
           title="No mods installed"
           hint="Add a Steam Workshop item above to install it on this server."
         />
+      ) : filteredMods.length === 0 ? (
+        <EmptyState
+          icon={Search}
+          title={`No mods match “${query.trim()}”`}
+          hint="Search looks at the mod name and Workshop item ID."
+        />
       ) : (
         <div className="grid gap-3 sm:grid-cols-2">
-          {mods.map((m) => (
+          {filteredMods.map((m) => (
             <ModCard
               key={m.id}
               mod={m}

@@ -27,7 +27,13 @@ interface LoadOrderListProps {
   maps: MapEntry[];
   /** Config tab link to the sandbox options (mod sections), when the game has one. */
   sandboxPath?: string | null;
+  /** Search text: hides non-matching rows (reordering still uses full-list positions). */
+  query?: string;
   onSaved: () => Promise<unknown>;
+}
+
+function matches(q: string, values: (string | null | undefined)[]): boolean {
+  return !q || values.some((v) => v?.toLowerCase().includes(q));
 }
 
 /**
@@ -40,8 +46,10 @@ export function LoadOrderList({
   entries,
   maps,
   sandboxPath,
+  query = "",
   onSaved,
 }: LoadOrderListProps) {
+  const q = query.trim().toLowerCase();
   const [rows, setRows] = useState(entries);
   const [mapRows, setMapRows] = useState(maps);
   const [dragIndex, setDragIndex] = useState<number | null>(null);
@@ -62,6 +70,8 @@ export function LoadOrderList({
   const mapActive = (m: MapEntry) => m.mod_ids.some((id) => enabledMods.has(id));
   const shown = withWarnings(rows);
   const enabledCount = rows.filter((r) => r.enabled).length;
+  const isMatch = (r: LoadOrderEntry) => matches(q, [r.mod_id, r.name, r.item_title, r.item_id]);
+  const matchCount = q ? rows.filter(isMatch).length : rows.length;
 
   function move(from: number, to: number) {
     if (to < 0 || to >= rows.length || from === to) return;
@@ -107,6 +117,7 @@ export function LoadOrderList({
       <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
         <span>
           {enabledCount} of {rows.length} mods enabled · loaded top to bottom
+          {q && ` · showing ${matchCount} matching`}
         </span>
         <span className="ml-auto flex gap-2">
           {sandboxPath && (
@@ -127,7 +138,11 @@ export function LoadOrderList({
       </div>
 
       <ol className="flex flex-col divide-y divide-border rounded-lg border border-border" aria-label="Load order">
-        {shown.map((r, i) => (
+        {matchCount === 0 && (
+          <li className="px-3 py-3 text-xs text-muted-foreground">No mods match “{query.trim()}”.</li>
+        )}
+        {/* `i` is always the position in the full list, so moves stay correct while filtered. */}
+        {shown.map((r, i) => !isMatch(r) ? null : (
           <li
             key={r.id}
             draggable
@@ -198,7 +213,7 @@ export function LoadOrderList({
         ))}
       </ol>
 
-      <MapOrder rows={mapRows} setRows={setMapRows} isActive={mapActive} />
+      <MapOrder rows={mapRows} setRows={setMapRows} isActive={mapActive} query={q} />
 
       <div className="sticky bottom-0 flex items-center gap-2 border-t border-border bg-background/95 py-3 backdrop-blur">
         <p className="mr-auto text-xs text-muted-foreground">
@@ -248,11 +263,16 @@ function MapOrder({
   rows,
   setRows,
   isActive,
+  query,
 }: {
   rows: MapEntry[];
   setRows: React.Dispatch<React.SetStateAction<MapEntry[]>>;
   isActive: (m: MapEntry) => boolean;
+  /** Lower-cased search text ("" = show all). */
+  query: string;
 }) {
+  const isMatch = (m: MapEntry) => matches(query, [m.name, ...m.mod_ids]);
+  const anyMatch = rows.some(isMatch);
   const [dragIndex, setDragIndex] = useState<number | null>(null);
 
   function move(from: number, to: number) {
@@ -283,7 +303,11 @@ function MapOrder({
             once installed, so you can order them.
           </li>
         )}
+        {rows.length > 0 && query && !anyMatch && (
+          <li className="px-3 py-3 text-xs text-muted-foreground">No maps match “{query}”.</li>
+        )}
         {rows.map((m, i) => {
+          if (!isMatch(m)) return null;
           const active = isActive(m);
           return (
             <li
