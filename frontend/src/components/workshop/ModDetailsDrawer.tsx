@@ -1,5 +1,6 @@
 "use client";
 
+import { useLayoutEffect, useRef, useState } from "react";
 import useSWR from "swr";
 import { Users, Star, Clock, Download, Trash2, ArrowUpCircle, ExternalLink } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
@@ -10,6 +11,7 @@ import { Drawer } from "@/components/ui/drawer";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { ErrorState } from "@/components/common/states";
+import { SteamBBCode } from "@/components/workshop/SteamBBCode";
 
 const STEAM_ITEM_URL = "https://steamcommunity.com/sharedfiles/filedetails/?id=";
 
@@ -86,11 +88,7 @@ export function ModDetailsDrawer({
             </a>
           </div>
 
-          {data.description && (
-            <p className="whitespace-pre-wrap text-sm text-muted-foreground line-clamp-[12]">
-              {data.description}
-            </p>
-          )}
+          {data.description && <Description key={itemId} text={data.description} />}
 
           {installedMod && submods && submods.length > 0 && (
             <div>
@@ -161,6 +159,44 @@ export function ModDetailsDrawer({
         </div>
       )}
     </Drawer>
+  );
+}
+
+const COLLAPSED_HEIGHT = 320;
+
+/** Steam description (BBCode), collapsed with a fade when it is long. */
+function Description({ text }: { text: string }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [overflows, setOverflows] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (el) setOverflows(el.scrollHeight > COLLAPSED_HEIGHT + 40);
+  }, [text]);
+
+  const collapsed = overflows && !expanded;
+  return (
+    <div>
+      <div
+        ref={ref}
+        className="relative overflow-hidden"
+        style={collapsed ? { maxHeight: COLLAPSED_HEIGHT } : undefined}
+      >
+        <SteamBBCode text={text} className="text-sm text-muted-foreground" />
+        {collapsed && (
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-popover to-transparent" />
+        )}
+      </div>
+      {overflows && (
+        <button
+          onClick={() => setExpanded((v) => !v)}
+          className="mt-1 text-xs font-medium text-info hover:underline"
+        >
+          {expanded ? "Show less" : "Show more"}
+        </button>
+      )}
+    </div>
   );
 }
 

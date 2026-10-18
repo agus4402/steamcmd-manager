@@ -7,7 +7,6 @@ import {
   Boxes,
   Plus,
   Trash2,
-  Upload,
   Users,
   Clock,
   RotateCw,
@@ -17,6 +16,7 @@ import {
   Info,
   Search,
   X,
+  CalendarPlus,
 } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import {
@@ -28,8 +28,7 @@ import {
 } from "@/lib/types";
 import { formatCount, timeAgo } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { Input, Label } from "@/components/ui/input";
-import { Card, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState, ErrorState } from "@/components/common/states";
 import { ModStatusBadge } from "@/components/workshop/ModStatusBadge";
@@ -39,6 +38,29 @@ import { WorkshopBrowse } from "@/components/workshop/WorkshopBrowse";
 import { LoadOrderList } from "@/components/workshop/LoadOrderList";
 import { cn } from "@/lib/utils";
 import { useServerCtx } from "../server-context";
+
+type InstalledSort = "recent" | "oldest" | "name";
+const SORTS: { value: InstalledSort; label: string }[] = [
+  { value: "recent", label: "Recently added" },
+  { value: "oldest", label: "Oldest first" },
+  { value: "name", label: "Name (A–Z)" },
+];
+const SORT_KEY = "steamcmd_ws_installed_sort";
+
+const modName = (m: WorkshopMod) => m.name || m.title || m.item_id;
+
+/** Order added = created_at (every add is its own row/commit); name breaks ties
+ * (mods restored together by Sync share one timestamp). */
+function sortMods(mods: WorkshopMod[], sort: InstalledSort): WorkshopMod[] {
+  const byName = (a: WorkshopMod, b: WorkshopMod) =>
+    modName(a).localeCompare(modName(b), undefined, { sensitivity: "base" });
+  const added = (m: WorkshopMod) => new Date(m.created_at).getTime();
+  return [...mods].sort((a, b) => {
+    if (sort === "name") return byName(a, b);
+    const diff = sort === "recent" ? added(b) - added(a) : added(a) - added(b);
+    return diff || byName(a, b);
+  });
+}
 
 export default function ServerWorkshopPage() {
   const { server, mutate: mutateServer } = useServerCtx();
@@ -69,9 +91,9 @@ export default function ServerWorkshopPage() {
   }, [modsSignature, mutateLoadOrder]);
 
   const [tab, setTab] = useState<"installed" | "order" | "browse">("installed");
-  const [importInput, setImportInput] = useState<string | undefined>(undefined);
-  const [item, setItem] = useState("");
-  const [adding, setAdding] = useState(false);
+  // A Browse search requested from elsewhere (missing dependency); the key
+  // remounts Browse so it runs even when the same text is requested again.
+  const [browseSearch, setBrowseSearch] = useState({ query: "", key: 0 });
   const [busyId, setBusyId] = useState<string | null>(null);
   const [detailItemId, setDetailItemId] = useState<string | null>(null);
   const [importOpen, setImportOpen] = useState(false);
@@ -79,14 +101,41 @@ export default function ServerWorkshopPage() {
   const [bulkBusy, setBulkBusy] = useState(false);
   // Filters both the Installed grid and the Load order list.
   const [query, setQuery] = useState("");
+  const [sort, setSort] = useState<InstalledSort>("recent");
+
+  useEffect(() => {
+    try {
+      const saved = window.localStorage.getItem(SORT_KEY);
+      if (saved && SORTS.some((s) => s.value === saved)) setSort(saved as InstalledSort);
+    } catch {
+      /* storage unavailable */
+    }
+  }, []);
+
+  function changeSort(next: InstalledSort) {
+    setSort(next);
+    try {
+      window.localStorage.setItem(SORT_KEY, next);
+    } catch {
+      /* storage unavailable */
+    }
+  }
+
+  function searchInBrowse(text: string) {
+    setBrowseSearch((s) => ({ query: text, key: s.key + 1 }));
+    setTab("browse");
+  }
 
   const mods = data ?? [];
   const q = query.trim().toLowerCase();
-  const filteredMods = q
-    ? mods.filter((m) =>
-        [m.name, m.title, m.item_id].some((v) => v?.toLowerCase().includes(q)),
-      )
-    : mods;
+  const filteredMods = sortMods(
+    q
+      ? mods.filter((m) =>
+          [m.name, m.title, m.item_id].some((v) => v?.toLowerCase().includes(q)),
+        )
+      : mods,
+    sort,
+  );
   const detailMod = mods.find((m) => m.item_id === detailItemId) ?? null;
   const installedIds = new Set(mods.map((m) => m.item_id));
   const updatesAvailable = mods.filter((m) => m.status === "update_available").length;
@@ -148,30 +197,6 @@ export default function ServerWorkshopPage() {
       toast.error("Could not change auto-update", {
         description: e instanceof ApiError ? e.message : String(e),
       });
-    }
-  }
-
-  async function add() {
-    if (!item.trim()) return;
-    setAdding(true);
-    try {
-      await api.addMod(server.id, item.trim());
-      toast.success("Mod queued for download");
-      setItem("");
-      await mutate();
-    } catch (e) {
-      if (e instanceof ApiError && e.status === 409 && e.message.startsWith("collection:")) {
-        // A collection: preview its members in the import dialog instead.
-        setImportInput(item.trim());
-        setImportOpen(true);
-        setItem("");
-        return;
-      }
-      toast.error("Could not add mod", {
-        description: e instanceof ApiError ? e.message : String(e),
-      });
-    } finally {
-      setAdding(false);
     }
   }
 
@@ -283,24 +308,51 @@ export default function ServerWorkshopPage() {
       </div>
 
       {tab !== "browse" && (
-        <div className="relative">
-          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => e.key === "Escape" && setQuery("")}
-            placeholder={tab === "order" ? "Search mods and maps…" : "Search installed mods…"}
-            aria-label="Search mods"
-            className="pl-9 pr-9"
-          />
-          {query && (
-            <button
-              onClick={() => setQuery("")}
-              className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground hover:text-foreground"
-              aria-label="Clear search"
-            >
-              <X className="size-4" />
-            </button>
+        <div className="flex gap-2">
+          <div className="relative flex-1">
+            <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => e.key === "Escape" && setQuery("")}
+              placeholder={tab === "order" ? "Search mods and maps…" : "Search installed mods…"}
+              aria-label="Search mods"
+              className="pl-9 pr-9"
+            />
+            {query && (
+              <button
+                onClick={() => setQuery("")}
+                className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground hover:text-foreground"
+                aria-label="Clear search"
+              >
+                <X className="size-4" />
+              </button>
+            )}
+          </div>
+          {tab === "installed" && (
+            <>
+              <select
+                value={sort}
+                onChange={(e) => changeSort(e.target.value as InstalledSort)}
+                aria-label="Sort installed mods"
+                className="h-9 rounded-md border border-border bg-background px-2 text-sm outline-none focus:border-primary"
+              >
+                {SORTS.map((s) => (
+                  <option key={s.value} value={s.value}>
+                    {s.label}
+                  </option>
+                ))}
+              </select>
+              <Button
+                size="icon"
+                onClick={() => setImportOpen(true)}
+                aria-label="Add mods"
+                title="Add mods (item, collection or list of IDs)"
+                className="size-9 shrink-0"
+              >
+                <Plus className="size-4" />
+              </Button>
+            </>
           )}
         </div>
       )}
@@ -313,9 +365,13 @@ export default function ServerWorkshopPage() {
           sandboxPath={sandboxPath}
           query={query}
           onSaved={() => mutateLoadOrder()}
+          onOpenItem={setDetailItemId}
+          onSearchMissing={searchInBrowse}
         />
       ) : tab === "browse" ? (
         <WorkshopBrowse
+          key={browseSearch.key}
+          initialQuery={browseSearch.query}
           gameId={server.workshop_app_id as number}
           installedIds={installedIds}
           busyId={busyId}
@@ -324,35 +380,6 @@ export default function ServerWorkshopPage() {
         />
       ) : (
         <>
-      {/* Add bar */}
-      <Card>
-        <CardContent className="flex flex-col gap-3 pt-5">
-          <div className="grid gap-3 sm:grid-cols-[1fr_auto_auto] sm:items-end">
-            <div>
-              <Label htmlFor="ws-item">Workshop item ID or URL</Label>
-              <Input
-                id="ws-item"
-                value={item}
-                onChange={(e) => setItem(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && add()}
-                placeholder="e.g. 2289615…"
-              />
-            </div>
-            <Button onClick={add} disabled={adding || !item.trim()}>
-              <Plus className="size-4" /> {adding ? "Adding…" : "Add"}
-            </Button>
-            <Button variant="secondary" onClick={() => setImportOpen(true)}>
-              <Upload className="size-4" /> Import
-            </Button>
-          </div>
-          <p className="text-xs text-muted-foreground">
-            Add an item or paste a collection URL (it opens the import preview), or use Import for
-            a list of IDs. Mods download via SteamCMD into the server&apos;s data and apply on next
-            start.
-          </p>
-        </CardContent>
-      </Card>
-
       {/* Toolbar: updates, sync, auto-update */}
       {mods.length > 0 && (
         <div className="flex flex-wrap items-center gap-2">
@@ -400,7 +427,12 @@ export default function ServerWorkshopPage() {
         <EmptyState
           icon={Boxes}
           title="No mods installed"
-          hint="Add a Steam Workshop item above to install it on this server."
+          hint="Use + to add a Workshop item, a collection or a list of IDs, or find mods in Browse."
+          action={
+            <Button size="sm" onClick={() => setImportOpen(true)}>
+              <Plus className="size-4" /> Add mods
+            </Button>
+          }
         />
       ) : filteredMods.length === 0 ? (
         <EmptyState
@@ -441,11 +473,7 @@ export default function ServerWorkshopPage() {
       {importOpen && (
         <ImportModsModal
           serverId={server.id}
-          initialInput={importInput}
-          onClose={() => {
-            setImportOpen(false);
-            setImportInput(undefined);
-          }}
+          onClose={() => setImportOpen(false)}
           onInstalled={() => mutate()}
         />
       )}
@@ -501,10 +529,13 @@ function ModCard({
               </span>
             )}
             {mod.time_updated_remote && (
-              <span className="flex items-center gap-1">
+              <span className="flex items-center gap-1" title="Last updated on Steam">
                 <Clock className="size-3" /> {timeAgo(mod.time_updated_remote)}
               </span>
             )}
+            <span className="flex items-center gap-1" title={`Added ${new Date(mod.created_at).toLocaleString()}`}>
+              <CalendarPlus className="size-3" /> added {timeAgo(mod.created_at)}
+            </span>
           </div>
         </div>
         <div className="mt-1 flex items-center justify-between">

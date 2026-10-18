@@ -94,13 +94,15 @@ export function ImportModsModal({ serverId, initialInput, onClose, onInstalled }
         onMouseDown={(e) => e.stopPropagation()}
         className="flex max-h-[85vh] w-full max-w-lg animate-zoom-in flex-col rounded-xl border border-border bg-popover p-6 shadow-2xl"
       >
-        <h2 className="text-lg font-semibold">Import mods</h2>
+        <h2 className="text-lg font-semibold">Add mods</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          Paste a collection URL/ID, mod URLs, or a list of Workshop IDs (commas, spaces, or
-          new lines). Collections are expanded into their items automatically.
+          Paste a mod URL or ID, a collection URL, or a list of Workshop IDs (commas, spaces or
+          new lines). Collections are expanded into their items and dependencies are added
+          automatically. Mods apply on the next start.
         </p>
 
         <textarea
+          autoFocus
           value={input}
           onChange={(e) => {
             setInput(e.target.value);
