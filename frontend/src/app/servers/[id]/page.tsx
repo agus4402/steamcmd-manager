@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import useSWR from "swr";
 import { Copy, Cpu, Gamepad2, Globe, Trash2 } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
+import { copyToClipboard } from "@/lib/utils";
 import type { PanelTunnel } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,9 +17,9 @@ import { useServerCtx } from "./server-context";
 export default function ServerOverview() {
   const { server } = useServerCtx();
 
-  function copyPort(port: number) {
-    navigator.clipboard?.writeText(String(port));
-    toast.success(`Copied port ${port}`);
+  async function copyPort(port: number) {
+    if (await copyToClipboard(String(port))) toast.success(`Copied port ${port}`);
+    else toast.error("Could not copy — select the port and copy it manually");
   }
 
   return (
@@ -143,9 +144,9 @@ function ControlLinkCard({ serverId, enabled }: { serverId: string; enabled: boo
 function CopyLink({ url }: { url: string }) {
   return (
     <button
-      onClick={() => {
-        navigator.clipboard?.writeText(url);
-        toast.success("Copied control page link");
+      onClick={async () => {
+        if (await copyToClipboard(url)) toast.success("Copied control page link");
+        else toast.error("Could not copy — select the link and copy it manually");
       }}
       className="flex items-center justify-between gap-2 rounded-md border border-border px-3 py-2 text-left transition-colors hover:bg-accent"
       title="Copy link"

@@ -52,8 +52,12 @@ class TunnelSpec:
     protocol: str
     name: str
     # Game-specific provider profile from the template port (e.g. playit's
-    # "project-zomboid"); None = provider default.
+    # "project-zomboid"); CUSTOM_TCP_PROFILE = plain TCP with no game filtering
+    # (e.g. web traffic); None = provider default.
     profile: str | None = None
+
+
+CUSTOM_TCP_PROFILE = "custom-tcp"
 
 
 @dataclass(slots=True)

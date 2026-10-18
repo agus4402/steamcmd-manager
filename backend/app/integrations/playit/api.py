@@ -152,6 +152,44 @@ class PlayitApi:
             "status": "pending",
         }
 
+    async def create_custom_tcp_tunnel(self, local_port: int, name: str) -> dict:
+        """Generic TCP tunnel (v1 API ``custom-tcp`` ports): no game profile, so
+        playit passes any TCP traffic — HTTP included. The themed types filter by
+        protocol (verified: a "minecraft-java" tunnel resets plain HTTP)."""
+        rd = await self.rundata()
+        agent_id = rd.get("agent_id")
+        if not agent_id:
+            raise PlayitApiError("no agent registered for this account")
+        data = await _post(
+            "/v1/tunnels/create",
+            {
+                "ports": {"type": "custom-tcp", "details": 1},
+                "origin": {
+                    "type": "agent",
+                    "data": {
+                        "agent_id": agent_id,
+                        "config": {
+                            "fields": [
+                                {"name": "local_ip", "value": "127.0.0.1"},
+                                {"name": "local_port", "value": str(local_port)},
+                            ]
+                        },
+                    },
+                },
+                "enabled": True,
+                "alloc": None,
+                "name": name,
+                "firewall_id": None,
+            },
+            self._headers,
+        )
+        tunnel = data if isinstance(data, dict) else {}
+        return {
+            "external_id": str(tunnel.get("id") or ""),
+            "remote_domain": None,
+            "status": "pending",
+        }
+
     async def list_tunnels(self) -> list[dict]:
         rd = await self.rundata()
         out: list[dict] = []

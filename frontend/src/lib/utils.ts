@@ -6,6 +6,36 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+/**
+ * Copy text to the clipboard. navigator.clipboard only exists in secure
+ * contexts (HTTPS / localhost) — the panel is usually opened over plain http on
+ * the LAN — so fall back to a hidden textarea + execCommand("copy").
+ */
+export async function copyToClipboard(text: string): Promise<boolean> {
+  if (window.isSecureContext && navigator.clipboard) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      /* fall through to the legacy path */
+    }
+  }
+  const el = document.createElement("textarea");
+  el.value = text;
+  el.setAttribute("readonly", "");
+  el.style.position = "fixed";
+  el.style.opacity = "0";
+  document.body.appendChild(el);
+  el.select();
+  try {
+    return document.execCommand("copy");
+  } catch {
+    return false;
+  } finally {
+    el.remove();
+  }
+}
+
 /** Human-readable byte size, e.g. 1536 -> "1.5 KB". */
 export function formatBytes(bytes: number, decimals = 1): string {
   if (!bytes || bytes < 0) return "0 B";

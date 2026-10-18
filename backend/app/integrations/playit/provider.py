@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
 
 from app.integrations.base import (
+    CUSTOM_TCP_PROFILE,
     ConnectStart,
     IntegrationProvider,
     ProviderCapability,
@@ -153,9 +154,13 @@ class PlayitProvider(IntegrationProvider):
             raise RuntimeError("Playit is not connected")
         await self._ensure_running(integration, secret)
         try:
-            data = await PlayitApi(secret).create_tunnel(
-                spec.local_port, spec.protocol, spec.name, tunnel_type=spec.profile
-            )
+            api = PlayitApi(secret)
+            if spec.profile == CUSTOM_TCP_PROFILE:
+                data = await api.create_custom_tcp_tunnel(spec.local_port, spec.name)
+            else:
+                data = await api.create_tunnel(
+                    spec.local_port, spec.protocol, spec.name, tunnel_type=spec.profile
+                )
         except PlayitApiError as exc:
             return TunnelResult(
                 external_id=None,

@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import app.integrations  # noqa: F401 — importing registers all providers
 from app.config import get_settings
 from app.db import SessionLocal
-from app.integrations.base import IntegrationProvider, TunnelSpec
+from app.integrations.base import CUSTOM_TCP_PROFILE, IntegrationProvider, TunnelSpec
 from app.integrations.registry import get_provider, list_providers
 from app.models.integration import (
     Integration,
@@ -337,7 +337,8 @@ async def create_tunnel(
 async def _tunnel_profile(session: AsyncSession, tunnel: IntegrationTunnel) -> str | None:
     """The template's tunnel profile for the server port this tunnel exposes."""
     if tunnel.server_id is None:
-        return None
+        # The panel's web tunnel needs plain TCP: game profiles drop HTTP.
+        return CUSTOM_TCP_PROFILE if tunnel.name == PANEL_TUNNEL_NAME else None
     server = await session.get(Server, tunnel.server_id)
     if server is None:
         return None
@@ -444,8 +445,8 @@ async def create_panel_tunnel(
 ) -> IntegrationTunnel:
     if await find_panel_tunnel(session, integration) is not None:
         raise IntegrationError("the panel already has a tunnel")
-    # Plain TCP: HTTP rides on it, so the panel is reachable at
-    # http://<tunnel address>/ without any HTTPS/domain setup on the provider.
+    # Generic TCP (see _tunnel_profile): HTTP rides on it, so the panel is
+    # reachable at http://<tunnel address>/ with no domain/HTTPS setup.
     return await create_tunnel(
         session,
         integration,

@@ -12,6 +12,7 @@ import {
   type ControlAction,
   type ControlServer,
 } from "@/lib/controlApi";
+import { copyToClipboard } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input, Label } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -237,9 +238,9 @@ function ControlPanel({ serverId, onSignedOut }: { serverId: string; onSignedOut
               <dt className="capitalize text-muted-foreground">{p.name}</dt>
               <dd>
                 <button
-                  onClick={() => {
-                    navigator.clipboard?.writeText(address);
-                    toast.success(`Copied ${address}`);
+                  onClick={async () => {
+                    if (await copyToClipboard(address)) toast.success(`Copied ${address}`);
+                    else toast.error("Could not copy — select the address and copy it manually");
                   }}
                   className="inline-flex items-center gap-2 rounded-md px-2 py-1 font-mono text-xs transition-colors hover:bg-accent"
                   title="Copy address"
