@@ -66,6 +66,8 @@ class ContainerState:
     exists: bool
     status: str
     exit_code: int | None = None
+    id: str | None = None
+    started_at: str | None = None
 
 
 @dataclass(slots=True)
@@ -169,8 +171,14 @@ class DockerOrchestrator:
         if c is None:
             return ContainerState(exists=False, status="absent")
         c.reload()
-        exit_code = c.attrs.get("State", {}).get("ExitCode")
-        return ContainerState(exists=True, status=c.status, exit_code=exit_code)
+        st = c.attrs.get("State", {})
+        return ContainerState(
+            exists=True,
+            status=c.status,
+            exit_code=st.get("ExitCode"),
+            id=c.short_id,
+            started_at=st.get("StartedAt"),
+        )
 
     # -- stats ----------------------------------------------------------------
 
@@ -750,11 +758,35 @@ class DockerOrchestrator:
 
     # -- logs / stdin ---------------------------------------------------------
 
-    def follow_logs(self, server_id: str, tail: int = 200) -> Iterator[bytes]:
-        c = self._get(self.container_name(server_id)) or self._get(self.install_name(server_id))
+    def follow_logs(
+        self,
+        server_id: str,
+        tail: int | str = 200,
+        source: str = "auto",
+        since: float | None = None,
+        timestamps: bool = False,
+    ) -> Iterator[bytes]:
+        """Follow one container's output.
+
+        source: "server" (game container), "install" (one-shot steamcmd
+        container) or "auto" — the install container while it runs (installs and
+        update-on-start), otherwise the game container.
+        """
+        server = self._get(self.container_name(server_id))
+        install = self._get(self.install_name(server_id))
+        if source == "server":
+            c = server
+        elif source == "install":
+            c = install
+        else:
+            c = install if install is not None and install.status == "running" else (server or install)
         if c is None:
             return iter(())
-        return c.logs(stream=True, follow=True, stdout=True, stderr=True, tail=tail)
+        kwargs: dict = {"stream": True, "follow": True, "stdout": True, "stderr": True,
+                        "tail": tail, "timestamps": timestamps}
+        if since is not None:
+            kwargs["since"] = since
+        return c.logs(**kwargs)
 
     def recent_logs(self, server_id: str, tail: int = 200) -> str:
         c = self._get(self.container_name(server_id))

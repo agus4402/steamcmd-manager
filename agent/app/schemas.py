@@ -41,6 +41,10 @@ class StateResponse(BaseModel):
     exists: bool
     status: str
     exit_code: int | None = None
+    # Identify a container instance: a recreated container has a new id, a
+    # restarted one keeps it with a new started_at (the console follows both).
+    id: str | None = None
+    started_at: str | None = None
 
 
 class InstallResultResponse(BaseModel):

@@ -190,7 +190,7 @@ async def remove(server_id: str = Depends(valid_server_id), remove_data: bool = 
 @app.get("/servers/{server_id}/state", dependencies=authed, response_model=StateResponse)
 async def state(server_id: str = Depends(valid_server_id)) -> StateResponse:
     st = await run_in_threadpool(orchestrator.state, server_id)
-    return StateResponse(exists=st.exists, status=st.status, exit_code=st.exit_code)
+    return StateResponse(**asdict(st))
 
 
 @app.get("/servers/{server_id}/logs", dependencies=authed, response_model=LogsResponse)
@@ -227,9 +227,16 @@ async def install_logs(server_id: str = Depends(valid_server_id), tail: int = 50
 
 
 @app.get("/servers/{server_id}/logs/follow", dependencies=authed)
-async def follow_logs(server_id: str = Depends(valid_server_id), tail: int = 200) -> StreamingResponse:
+async def follow_logs(
+    server_id: str = Depends(valid_server_id),
+    tail: str = "200",
+    source: Literal["auto", "server", "install"] = "auto",
+    since: float | None = None,
+    timestamps: bool = False,
+) -> StreamingResponse:
     # Blocking docker log iterator -> streamed response (iterated in a threadpool).
-    gen = orchestrator.follow_logs(server_id, tail)
+    tail_arg: int | str = "all" if tail == "all" else int(tail) if tail.isdigit() else 200
+    gen = orchestrator.follow_logs(server_id, tail_arg, source, since, timestamps)
     return StreamingResponse(iterate_in_threadpool(gen), media_type="application/octet-stream")
 
 
@@ -253,7 +260,7 @@ async def install_wait(server_id: str = Depends(valid_server_id)) -> InstallResu
 @app.get("/servers/{server_id}/install/state", dependencies=authed, response_model=StateResponse)
 async def install_state(server_id: str = Depends(valid_server_id)) -> StateResponse:
     st = await run_in_threadpool(orchestrator.install_state, server_id)
-    return StateResponse(exists=st.exists, status=st.status, exit_code=st.exit_code)
+    return StateResponse(**asdict(st))
 
 
 @app.post("/servers/{server_id}/stdin", dependencies=authed, status_code=204)

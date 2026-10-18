@@ -51,7 +51,10 @@ export default function ServerLayout({
     if (ok) router.push("/servers");
   }
 
-  if (error) {
+  // Only when there is nothing to show: a transient failure (backend restart,
+  // network blip) keeps the last data on screen — the 3s poll retries — instead
+  // of tearing down the open page (e.g. a live console).
+  if (error && !server) {
     return (
       <div className="mx-auto max-w-5xl">
         <ErrorState

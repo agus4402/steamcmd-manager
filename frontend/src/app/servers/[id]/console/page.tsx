@@ -1,9 +1,9 @@
 "use client";
 
-import Console from "@/components/Console";
+import ServerConsole from "@/components/console/ServerConsole";
 import { useServerCtx } from "../server-context";
 
 export default function ServerConsolePage() {
   const { server, setLiveProgress } = useServerCtx();
-  return <Console serverId={server.id} serverStatus={server.status} onProgress={setLiveProgress} />;
+  return <ServerConsole serverId={server.id} serverName={server.name} onProgress={setLiveProgress} />;
 }

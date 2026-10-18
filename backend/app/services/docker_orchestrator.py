@@ -36,6 +36,9 @@ class ContainerState:
     exists: bool
     status: str
     exit_code: int | None = None
+    # Container instance identity (new id = recreated, new started_at = restarted).
+    id: str | None = None
+    started_at: str | None = None
 
 
 @dataclass(slots=True)
@@ -163,7 +166,11 @@ class DockerOrchestrator:
     def _state(self, method: str, path: str) -> ContainerState:
         data = self._request(method, path).json()
         return ContainerState(
-            exists=data["exists"], status=data["status"], exit_code=data.get("exit_code")
+            exists=data["exists"],
+            status=data["status"],
+            exit_code=data.get("exit_code"),
+            id=data.get("id"),
+            started_at=data.get("started_at"),
         )
 
     # -- stats ----------------------------------------------------------------
@@ -261,14 +268,29 @@ class DockerOrchestrator:
             "GET", f"/servers/{server_id}/install/logs", params={"tail": tail}
         ).json()["logs"]
 
-    def follow_logs(self, server_id: str, tail: int = 200) -> Iterator[bytes]:
+    def follow_logs(
+        self,
+        server_id: str,
+        tail: int | str = 200,
+        *,
+        source: str = "auto",
+        since: float | None = None,
+        timestamps: bool = False,
+    ) -> Iterator[bytes]:
         """Stream the agent's follow-logs endpoint as a byte iterator.
 
         Opens an httpx stream and yields chunks; the stream is closed when the
-        consumer (console_ws pump thread) stops iterating.
+        consumer (console_ws pump thread) stops iterating. See the agent's
+        ``follow_logs`` for ``source``/``since``/``timestamps``.
         """
         url = f"{self._base}/servers/{server_id}/logs/follow"
-        params = {"tail": tail}
+        params: dict[str, str | int | float] = {
+            "tail": tail,
+            "source": source,
+            "timestamps": "true" if timestamps else "false",
+        }
+        if since is not None:
+            params["since"] = since
         try:
             with httpx.stream(
                 "GET",
