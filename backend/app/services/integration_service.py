@@ -11,11 +11,13 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime, timezone
+from urllib.parse import urlparse
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.integrations  # noqa: F401 — importing registers all providers
+from app.config import get_settings
 from app.db import SessionLocal
 from app.integrations.base import IntegrationProvider, TunnelSpec
 from app.integrations.registry import get_provider, list_providers
@@ -395,3 +397,60 @@ async def delete_tunnel(session: AsyncSession, integration: Integration, tunnel_
     await _advertise_public_ports(session, tunnel, removed=True)
     await session.delete(tunnel)
     await session.commit()
+
+
+# -- panel tunnel (public access to the web panel) ----------------------------
+
+# The tunnel that exposes the web panel itself (e.g. the public server control
+# pages). Identified by name, so it survives a re-import from the provider.
+PANEL_TUNNEL_NAME = "steamcmd-panel"
+
+
+def panel_default_port() -> int | None:
+    """Host port the panel is published on, guessed from FRONTEND_ORIGIN."""
+    parsed = urlparse(get_settings().frontend_origin)
+    if parsed.port:
+        return parsed.port
+    return {"http": 80, "https": 443}.get(parsed.scheme)
+
+
+async def tunnel_integration(session: AsyncSession) -> Integration | None:
+    """The connected integration that can create tunnels (Playit), if any."""
+    result = await session.execute(
+        select(Integration).where(Integration.status == IntegrationStatus.CONNECTED.value)
+    )
+    for row in result.scalars().all():
+        provider = get_provider(row.provider)
+        if provider is not None and provider.supports_tunnels:
+            return row
+    return None
+
+
+async def find_panel_tunnel(
+    session: AsyncSession, integration: Integration
+) -> IntegrationTunnel | None:
+    result = await session.execute(
+        select(IntegrationTunnel).where(
+            IntegrationTunnel.integration_id == integration.id,
+            IntegrationTunnel.server_id.is_(None),
+            IntegrationTunnel.name == PANEL_TUNNEL_NAME,
+        )
+    )
+    return result.scalars().first()
+
+
+async def create_panel_tunnel(
+    session: AsyncSession, integration: Integration, local_port: int
+) -> IntegrationTunnel:
+    if await find_panel_tunnel(session, integration) is not None:
+        raise IntegrationError("the panel already has a tunnel")
+    # Plain TCP: HTTP rides on it, so the panel is reachable at
+    # http://<tunnel address>/ without any HTTPS/domain setup on the provider.
+    return await create_tunnel(
+        session,
+        integration,
+        server_id=None,
+        local_port=local_port,
+        protocol="tcp",
+        name=PANEL_TUNNEL_NAME,
+    )

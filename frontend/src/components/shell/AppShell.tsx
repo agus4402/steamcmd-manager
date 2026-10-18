@@ -27,8 +27,9 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     });
   }, []);
 
-  // The login route renders standalone, outside the panel chrome.
-  if (pathname === "/login") {
+  // The login route and the public server control pages render standalone,
+  // outside the panel chrome.
+  if (pathname === "/login" || pathname.startsWith("/control/")) {
     return <>{children}</>;
   }
 

@@ -274,6 +274,16 @@ export interface IntegrationTunnel {
   created_at: string;
 }
 
+/** Public access to the web panel through a tunnel provider (Playit). */
+export interface PanelTunnel {
+  /** Connected integration able to create tunnels; null = none connected. */
+  integration_id: string | null;
+  provider_name: string | null;
+  tunnel: IntegrationTunnel | null;
+  /** Host port the panel is published on (from the backend's FRONTEND_ORIGIN). */
+  default_port: number | null;
+}
+
 // -- config editor ------------------------------------------------------------
 
 export type ConfigFormat = "ini" | "pz_sandbox" | "text";

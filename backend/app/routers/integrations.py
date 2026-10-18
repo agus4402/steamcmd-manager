@@ -15,9 +15,12 @@ from app.schemas.integration import (
     ConnectStartOut,
     ConnectStatusOut,
     IntegrationOut,
+    PanelTunnelCreate,
+    PanelTunnelOut,
     TunnelCreate,
     TunnelOut,
 )
+from app.integrations.registry import get_provider
 from app.services import integration_service as svc
 
 router = APIRouter(prefix="/api/integrations", tags=["integrations"])
@@ -42,6 +45,48 @@ def _map_error(exc: svc.IntegrationError) -> HTTPException:
 async def list_integrations(db: AsyncSession = Depends(get_db)) -> list[IntegrationOut]:
     cards = await svc.list_integrations(db)
     return [IntegrationOut(**card) for card in cards]
+
+
+# -- panel tunnel (declared before /{integration_id} so the path wins) ---------
+
+
+@router.get("/panel-tunnel", response_model=PanelTunnelOut)
+async def get_panel_tunnel(db: AsyncSession = Depends(get_db)) -> PanelTunnelOut:
+    """The tunnel exposing the web panel (public control-page links), if any."""
+    integration = await svc.tunnel_integration(db)
+    if integration is None:
+        return PanelTunnelOut(integration_id=None, default_port=svc.panel_default_port())
+    tunnel = await svc.find_panel_tunnel(db, integration)
+    if tunnel is not None and not tunnel.remote_domain:
+        # Freshly created: pull the allocated address from the provider.
+        try:
+            await svc.sync_integration(db, integration)
+        except Exception:  # noqa: BLE001 — best-effort
+            pass
+        tunnel = await svc.find_panel_tunnel(db, integration)
+    provider = get_provider(integration.provider)
+    return PanelTunnelOut(
+        integration_id=integration.id,
+        provider_name=provider.name if provider else integration.provider,
+        tunnel=TunnelOut.model_validate(tunnel) if tunnel else None,
+        default_port=svc.panel_default_port(),
+    )
+
+
+@router.post(
+    "/panel-tunnel", response_model=TunnelOut, status_code=status.HTTP_202_ACCEPTED
+)
+async def create_panel_tunnel(
+    payload: PanelTunnelCreate, db: AsyncSession = Depends(get_db)
+) -> TunnelOut:
+    integration = await svc.tunnel_integration(db)
+    if integration is None:
+        raise HTTPException(status.HTTP_409_CONFLICT, "connect Playit.gg first")
+    try:
+        tunnel = await svc.create_panel_tunnel(db, integration, payload.local_port)
+    except svc.IntegrationError as exc:
+        raise _map_error(exc) from exc
+    return TunnelOut.model_validate(tunnel)
 
 
 @router.get("/{integration_id}", response_model=IntegrationOut)

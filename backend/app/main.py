@@ -15,6 +15,7 @@ from app.routers import (
     auth,
     config_files,
     console_ws,
+    control,
     integrations,
     notifications,
     schedule,
@@ -99,6 +100,8 @@ app.include_router(workshop.catalog_router, dependencies=[Depends(require_user)]
 app.include_router(config_files.router, dependencies=[Depends(require_user)])
 # WebSocket validates its token from the query string (see console_ws).
 app.include_router(console_ws.router)
+# Public per-server control page: its own server-password tokens (see control).
+app.include_router(control.router)
 
 
 @app.get("/health")

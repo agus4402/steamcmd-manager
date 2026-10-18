@@ -60,3 +60,18 @@ class TunnelOut(BaseModel):
     status: str
     error_message: str | None
     created_at: datetime
+
+
+class PanelTunnelCreate(BaseModel):
+    local_port: int = Field(ge=1, le=65535)
+
+
+class PanelTunnelOut(BaseModel):
+    """Public access to the web panel through a tunnel provider (Playit)."""
+
+    # Connected integration able to create tunnels; null = none connected.
+    integration_id: str | None
+    provider_name: str | None = None
+    tunnel: TunnelOut | None = None
+    # Host port the panel is published on (from FRONTEND_ORIGIN), as a default.
+    default_port: int | None = None

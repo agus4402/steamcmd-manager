@@ -23,6 +23,7 @@ import type {
   ConfigFileContent,
   ConfigWriteResult,
   LoadOrder,
+  PanelTunnel,
 } from "./types";
 
 // NEXT_PUBLIC_* is inlined at build time, so a prebuilt image (GHCR) is pointed
@@ -42,7 +43,7 @@ function resolveApiBase(): string {
   return `${window.location.protocol}//${window.location.hostname}:${rc.apiPort || "8080"}`;
 }
 
-const API_BASE = resolveApiBase();
+export const API_BASE = resolveApiBase();
 
 const TOKEN_KEY = "steamcmd_token";
 
@@ -71,7 +72,7 @@ const REQUEST_TIMEOUT_MS = 15000;
 // can legitimately run for many minutes — they get a much longer ceiling.
 const LONG_OP_TIMEOUT_MS = 20 * 60 * 1000;
 // Graceful stop (template stop_timeout ≤ 600s) + container recreate.
-const STOP_TIMEOUT_MS = 11 * 60 * 1000;
+export const STOP_TIMEOUT_MS = 11 * 60 * 1000;
 
 async function request<T>(
   path: string,
@@ -317,6 +318,13 @@ export const api = {
       }),
     deleteTunnel: (id: string, tunnelId: string) =>
       request<null>(`/api/integrations/${id}/tunnels/${tunnelId}`, { method: "DELETE" }),
+    // Tunnel exposing the panel itself (public control-page links).
+    panelTunnel: () => request<PanelTunnel>("/api/integrations/panel-tunnel"),
+    createPanelTunnel: (localPort: number) =>
+      request<IntegrationTunnel>("/api/integrations/panel-tunnel", {
+        method: "POST",
+        body: JSON.stringify({ local_port: localPort }),
+      }),
   },
 };
 
