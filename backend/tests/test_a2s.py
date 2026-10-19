@@ -10,7 +10,7 @@ import pytest
 
 from app.schemas.template import GameTemplate, QuerySpec
 from app.services import a2s
-from app.services.query_service import query_port
+from app.services.query_service import default_gateway, query_port
 
 CHALLENGE = b"\x11\x22\x33\x44"
 
@@ -142,3 +142,13 @@ def test_query_port_picks_offset_in_block() -> None:
     assert query_port(server, QuerySpec(port="game")) == 27030
     assert query_port(server, QuerySpec(port="game", offset=1)) == 27031
     assert query_port(server, QuerySpec(port="rcon")) is None
+
+
+def test_default_gateway_from_route_table() -> None:
+    table = (
+        "Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT\n"
+        "eth1\t0000A8C0\t00000000\t0001\t0\t0\t0\t00F0FFFF\t0\t0\t0\n"
+        "eth0\t00000000\t010012AC\t0003\t0\t0\t0\t00000000\t0\t0\t0\n"
+    )
+    assert default_gateway(table) == "172.18.0.1"
+    assert default_gateway(table.splitlines()[0]) is None

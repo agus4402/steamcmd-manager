@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import socket
+import struct
 import time
 
 from app.config import get_settings
@@ -54,12 +56,55 @@ async def query_server(server: Server) -> QueryOut:
         return out
 
 
+def default_gateway(route_table: str | None = None) -> str | None:
+    """IPv4 default gateway from /proc/net/route (inside a container: the Docker
+    host's address on the container's network)."""
+    try:
+        if route_table is None:
+            with open("/proc/net/route") as f:
+                route_table = f.read()
+    except OSError:
+        return None
+    for line in route_table.splitlines()[1:]:
+        fields = line.split()
+        # Destination 0.0.0.0 with the RTF_GATEWAY flag.
+        if len(fields) > 3 and fields[1] == "00000000" and int(fields[3], 16) & 0x2:
+            return socket.inet_ntoa(struct.pack("<L", int(fields[2], 16)))
+    return None
+
+
+_resolved_host: str | None = None
+
+
+async def _query_host() -> str:
+    """QUERY_HOST, or the default gateway when it doesn't resolve.
+
+    host.docker.internal only exists when compose maps it (extra_hosts:
+    host-gateway); an older compose file lacks it. The gateway is also a host
+    address, so the published game ports are reachable through it.
+    """
+    global _resolved_host
+    if _resolved_host:
+        return _resolved_host
+    host = settings.query_host
+    try:
+        await asyncio.get_running_loop().getaddrinfo(host, None)
+        _resolved_host = host
+    except socket.gaierror:
+        gateway = default_gateway()
+        if gateway is None:
+            return host  # surfaces the resolution error to the UI
+        logger.info("query host %r doesn't resolve; using gateway %s", host, gateway)
+        _resolved_host = gateway
+    return _resolved_host
+
+
 async def _query(server: Server, spec: QuerySpec) -> QueryOut:
     port = query_port(server, spec)
     if port is None:
         return QueryOut(supported=True, online=False, error="query port is not allocated")
 
-    host, timeout = settings.query_host, settings.query_timeout
+    host, timeout = await _query_host(), settings.query_timeout
     info_res, players_res = await asyncio.gather(
         a2s.info(host, port, timeout), a2s.players(host, port, timeout), return_exceptions=True
     )
