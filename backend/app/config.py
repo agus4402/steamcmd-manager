@@ -61,6 +61,13 @@ class Settings(BaseSettings):
     # metadata (GetPublishedFileDetails) and collection resolution still work.
     steam_api_key: str = ""
 
+    # Host the backend sends live-server queries (Steam A2S, UDP) to. Game
+    # containers publish their ports on the Docker host, which compose maps to
+    # host.docker.internal (extra_hosts: host-gateway). Use 127.0.0.1 when the
+    # backend runs directly on the host.
+    query_host: str = "host.docker.internal"
+    query_timeout: float = 2.0
+
     # CORS / frontend origin
     frontend_origin: str = "http://localhost:3000"
 

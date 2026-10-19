@@ -16,3 +16,7 @@ variables:
   - key: RCON_PASSWORD
     default: ""           # empty => the panel generates a strong password
 update_on_start: true
+
+# Live info (players, map) via Steam A2S on the game port.
+query:
+  port: game

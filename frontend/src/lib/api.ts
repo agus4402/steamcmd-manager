@@ -9,6 +9,7 @@ import type {
   ScheduledAction,
   Server,
   Snapshot,
+  ServerQuery,
   Stats,
   SteamCredentials,
   Template,
@@ -131,6 +132,7 @@ export const api = {
   servers: () => request<Server[]>("/api/servers"),
   server: (id: string) => request<Server>(`/api/servers/${id}`),
   stats: (id: string) => request<Stats>(`/api/servers/${id}/stats`),
+  query: (id: string) => request<ServerQuery>(`/api/servers/${id}/query`),
   create: (body: { template_id: string; name: string; variables: Record<string, string> }) =>
     request<Server>("/api/servers", { method: "POST", body: JSON.stringify(body) }),
   patch: (

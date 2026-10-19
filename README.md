@@ -79,6 +79,7 @@ Ver [`.env.example`](.env.example). Las clave:
 | `PORT_POOL_START` / `PORT_POOL_END` | Rango de puertos host asignables (default 27015–27200). |
 | `GAMESERVER_IMAGE` | Tag de la imagen base de game server. |
 | `AGENT_TOKEN` | Secreto compartido backend↔agente. Cambialo en prod. |
+| `QUERY_HOST` | Host al que el backend manda las queries A2S (jugadores/mapa). Default `host.docker.internal` (compose lo mapea al host con `host-gateway`); `127.0.0.1` si el backend corre fuera de Docker. |
 
 ---
 
@@ -132,6 +133,9 @@ variables:
   - key: RCON_PASSWORD
     default: ""             # vacío + key termina en PASSWORD => el panel genera uno fuerte
 update_on_start: true      # corre steamcmd app_update antes de arrancar
+query:                     # opcional: info en vivo (jugadores, mapa) vía Steam A2S (UDP)
+  port: game               # nombre del puerto a consultar
+  offset: 0                # puerto dentro del bloque `count` (Valheim responde en game+1)
 ```
 
 **Reglas de seguridad de los templates:**
@@ -165,6 +169,7 @@ Steam Guard al instalar. Las credenciales se **cifran en reposo** (Fernet, deriv
 | `POST` | `/api/servers/{id}/install\|start\|stop\|restart\|update` | Lifecycle. |
 | `PATCH` | `/api/servers/{id}` | Editar variables / startup. |
 | `DELETE` | `/api/servers/{id}` | Borra container + volumen + libera puertos. |
+| `GET` | `/api/servers/{id}/query` | Info en vivo del juego (A2S): nombre, mapa, jugadores. |
 | `WS` | `/api/servers/{id}/console?token=<jwt>` | Logs en vivo + comandos a stdin. |
 
 Todas las rutas (excepto `/health` y `/api/auth/login`) requieren `Authorization: Bearer <jwt>`.

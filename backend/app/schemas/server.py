@@ -41,6 +41,40 @@ class StatsOut(BaseModel):
     online_cpus: int = 0
 
 
+class QueryInfoOut(BaseModel):
+    """What the game reports about itself (Steam A2S_INFO)."""
+
+    name: str
+    map: str
+    game: str
+    version: str
+    players: int
+    max_players: int
+    bots: int
+    password: bool
+    vac: bool
+
+
+class QueryPlayerOut(BaseModel):
+    name: str  # empty while a player is still connecting
+    score: int
+    duration: int  # seconds connected
+
+
+class QueryOut(BaseModel):
+    """Live server query result."""
+
+    # False when the game's template declares no query protocol.
+    supported: bool
+    # True when the game answered the query.
+    online: bool = False
+    query_port: int | None = None
+    error: str | None = None
+    info: QueryInfoOut | None = None
+    # None when the game doesn't answer player-list queries.
+    players: list[QueryPlayerOut] | None = None
+
+
 class SnapshotOut(BaseModel):
     id: str
     created_at: str

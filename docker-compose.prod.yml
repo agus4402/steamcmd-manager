@@ -70,6 +70,9 @@ services:
     # The browser calls this port directly; the frontend learns it via API_PORT.
     ports:
       - "${BACKEND_PORT:-8080}:8000"
+    # Live server queries (A2S, UDP) go to the game ports published on the host.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - panel
       - orchestration

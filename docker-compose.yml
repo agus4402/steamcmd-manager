@@ -67,6 +67,9 @@ services:
       # NOTE: the backend intentionally does NOT mount the Docker socket.
       - ./backend:/app
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    # Live server queries (A2S, UDP) go to the game ports published on the host.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - panel
       - orchestration

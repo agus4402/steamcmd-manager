@@ -26,3 +26,9 @@ variables:
   - key: SERVER_PASSWORD
     default: ""          # empty => the panel generates one (min 5 chars for Valheim)
 update_on_start: true
+
+# Valheim answers Steam A2S queries on PORT_game+1 (the query/Steam port).
+# A2S_PLAYER returns the count but usually no names.
+query:
+  port: game
+  offset: 1

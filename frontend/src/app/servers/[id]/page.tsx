@@ -4,18 +4,25 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { toast } from "sonner";
 import useSWR from "swr";
-import { Copy, Cpu, Gamepad2, Globe, Trash2 } from "lucide-react";
+import { Copy, Cpu, Gamepad2, Globe, Trash2, Users } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import { copyToClipboard } from "@/lib/utils";
-import type { PanelTunnel } from "@/lib/types";
+import type { PanelTunnel, ServerQuery } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import MiniMetrics from "@/components/servers/MiniMetrics";
+import PlayerList from "@/components/servers/PlayerList";
 import { useServerCtx } from "./server-context";
 
 export default function ServerOverview() {
   const { server } = useServerCtx();
+  const running = server.status === "running";
+  // Also fetched while stopped: the answer says whether the game supports queries.
+  const { data: query } = useSWR<ServerQuery>(["query", server.id, running], () => api.query(server.id), {
+    refreshInterval: running ? 5000 : 0,
+    shouldRetryOnError: false,
+  });
 
   async function copyPort(port: number) {
     if (await copyToClipboard(String(port))) toast.success(`Copied port ${port}`);
@@ -54,7 +61,7 @@ export default function ServerOverview() {
           <CardContent>
             <MiniMetrics
               serverId={server.id}
-              running={server.status === "running"}
+              running={running}
               href={`/servers/${server.id}/metrics`}
             />
           </CardContent>
@@ -62,6 +69,19 @@ export default function ServerOverview() {
       </div>
 
       <div className="flex h-fit flex-col gap-6">
+      {query?.supported && (
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center gap-2 text-sm">
+              <Users className="size-4 text-muted-foreground" /> Players
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <PlayerList query={query} running={running} />
+          </CardContent>
+        </Card>
+      )}
+
       {/* Ports */}
       <Card>
         <CardHeader className="pb-3">

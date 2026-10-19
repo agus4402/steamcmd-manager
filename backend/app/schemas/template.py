@@ -104,6 +104,19 @@ class WorkshopSpec(BaseModel):
         return v.strip("/")
 
 
+class QuerySpec(BaseModel):
+    """How to ask the running server for live info (players, map, ...).
+
+    `port` names a template port; `offset` picks a port inside its consecutive
+    block (Valheim answers queries on PORT_game+1). The panel queries the
+    allocated host port.
+    """
+
+    protocol: Literal["a2s"] = "a2s"
+    port: str
+    offset: int = Field(default=0, ge=0, le=7)
+
+
 def _safe_rel_path(v: str, what: str) -> str:
     if ".." in v.split("/") or v.startswith("/") or not WORKSHOP_PATH_RE.match(v):
         raise ValueError(f"{what} '{v}' is not a safe relative path")
@@ -182,6 +195,25 @@ class GameTemplate(BaseModel):
     # whitelist of what the panel may read/write in the data dir.
     config_files: list[ConfigFileSpec] = Field(default_factory=list)
     config_dirs: list[str] = Field(default_factory=list)
+    # Live server query (Steam A2S: name, map, player count/list). Without it
+    # the panel shows no player info for this game.
+    query: QuerySpec | None = None
+
+    @model_validator(mode="after")
+    def _validate_query(self) -> GameTemplate:
+        if self.query is None:
+            return self
+        spec = next((p for p in self.ports if p.name == self.query.port), None)
+        if spec is None:
+            raise ValueError(f"query.port '{self.query.port}' is not a declared port")
+        if "udp" not in spec.protocols():
+            raise ValueError(f"query.port '{self.query.port}' must be udp (A2S is UDP)")
+        if self.query.offset >= spec.count:
+            raise ValueError(
+                f"query.offset {self.query.offset} is outside port '{spec.name}' "
+                f"block of {spec.count}"
+            )
+        return self
 
     @field_validator("config_dirs")
     @classmethod

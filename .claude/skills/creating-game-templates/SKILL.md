@@ -65,6 +65,7 @@ Top-level (`GameTemplate`):
 | `branches` | list[str] | `[]` | Steam beta branches suggested in the server's Settings → Steam branch (e.g. `legacy41`). Any valid branch can still be typed. |
 | `config_files` | list | `[]` | Game config files shown as sub-tabs of the server's **Config** tab. See ConfigFileSpec + [Config editor](#config-editor). |
 | `config_dirs` | list[str] | `[]` | Data-dir folders browsable/editable raw in Config → Files (e.g. where mods keep their configs). |
+| `query` | map\|null | `null` | Live server info (name, map, player count/list) shown in the server overview and control page. See QuerySpec + [Live query](#live-query). |
 
 PortSpec (each `ports` entry):
 
@@ -91,6 +92,14 @@ WorkshopSpec (the optional `workshop` map):
 | `install_path` | str | `steamapps/workshop` | Where items land inside the data dir, as `install_path/<item_id>`. Must be a **safe relative path** (no leading `/`, no `..`). |
 | `note` | str\|null | `null` | Shown at the top of the Workshop tab: how downloaded mods get enabled in this game. |
 | `inspector` | str\|null | `null` | Game-specific discovery of the mods *inside* each downloaded item (e.g. `project_zomboid` reads `mod.info`). Enables the Workshop **Load order** tab: per-mod-id toggles + ordering, passed to the prestart hook as `WORKSHOP_MOD_IDS`/`WORKSHOP_MAPS`. Implementations live in `backend/app/workshop/inspectors/`. |
+
+QuerySpec (the optional `query` map):
+
+| Field | Type | Default | Notes |
+|-------|------|---------|-------|
+| `protocol` | `a2s` | `a2s` | Steam server query (UDP). |
+| `port` | str | — | Name of a declared **udp** (or `both`) port. |
+| `offset` | int 0–7 | `0` | Which port of that port's `count` block answers queries (must be `< count`). |
 
 ## Placeholder rules
 
@@ -161,6 +170,16 @@ version as `<file>.panel-bak` ("Restore previous version"). On a running server 
 offers **Save & restart** (graceful stop → write → start) so the game can't overwrite
 the edit on shutdown. If a key is also written by your prestart hook, list it in
 `managed_keys`.
+
+## Live query
+
+Add `query` when the game answers Steam A2S queries (most Steamworks servers do). The
+backend sends `A2S_INFO` + `A2S_PLAYER` to the allocated **host** port (via
+`QUERY_HOST`, default `host.docker.internal`) and the UI shows players/max, map and
+names. Find the right port: some games answer on the game port (CS2, 7DTD, PZ), others
+on a separate query port (Valheim: `PORT_game+1` → `offset: 1`; Deadside: its own
+`query` port). Some games return a count but no player names (Valheim). Verify with a
+running server: `GET /api/servers/<id>/query` should return `online: true`.
 
 ## Persistence
 

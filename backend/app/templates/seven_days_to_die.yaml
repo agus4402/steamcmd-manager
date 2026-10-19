@@ -29,3 +29,7 @@ variables:
   - key: MAX_PLAYERS
     default: "8"
 update_on_start: true
+
+# Live info (players) via Steam A2S on ServerPort.
+query:
+  port: game

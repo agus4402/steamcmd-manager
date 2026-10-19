@@ -14,6 +14,7 @@ from app.schemas.server import (
     BackupJobOut,
     CloneRequest,
     ProgressOut,
+    QueryOut,
     RestoreRequest,
     ServerCreate,
     ServerOut,
@@ -22,7 +23,7 @@ from app.schemas.server import (
     StatsOut,
     SteamCredentials,
 )
-from app.services import server_service
+from app.services import query_service, server_service
 from app.services.docker_orchestrator import DockerError, orchestrator
 from app.services.template_loader import TemplateError
 
@@ -88,6 +89,13 @@ async def server_stats(server_id: str, db: AsyncSession = Depends(get_db)) -> St
     except DockerError as exc:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
     return StatsOut(**asdict(snapshot))
+
+
+@router.get("/{server_id}/query", response_model=QueryOut)
+async def server_query(server_id: str, db: AsyncSession = Depends(get_db)) -> QueryOut:
+    """Live game info (name, map, players) from the game's own query protocol."""
+    server = await _get_or_404(db, server_id)
+    return await query_service.query_server(server)
 
 
 @router.patch("/{server_id}", response_model=ServerOut)

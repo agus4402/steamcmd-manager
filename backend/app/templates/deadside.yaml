@@ -41,3 +41,6 @@ variables:
   - key: MAX_PLAYERS
     default: "20"
 update_on_start: true
+
+query:
+  port: query

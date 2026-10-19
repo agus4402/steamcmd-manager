@@ -1,5 +1,5 @@
 import { ApiError, STOP_TIMEOUT_MS } from "./api";
-import type { ServerStatus } from "./types";
+import type { ServerQuery, ServerStatus } from "./types";
 
 /**
  * Client for the public per-server control page (/control/<id>). Kept apart from
@@ -103,6 +103,7 @@ export const controlApi = {
     setControlToken(serverId, access_token);
   },
   server: (serverId: string) => request<ControlServer>(serverId, ""),
+  query: (serverId: string) => request<ServerQuery>(serverId, "/query"),
   // Stop/restart wait for the game to save and exit, like the panel's actions.
   action: (serverId: string, action: ControlAction) =>
     request<ControlServer>(serverId, `/${action}`, { method: "POST" }, STOP_TIMEOUT_MS),

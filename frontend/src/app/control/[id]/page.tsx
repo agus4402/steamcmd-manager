@@ -17,6 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Input, Label } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import StatusBadge from "@/components/StatusBadge";
+import PlayerList from "@/components/servers/PlayerList";
 
 /**
  * Public control page of one server (no panel login, no sidebar): basic info +
@@ -154,6 +155,12 @@ function ControlPanel({ serverId, onSignedOut }: { serverId: string; onSignedOut
     () => controlApi.server(serverId),
     { refreshInterval: 5000 },
   );
+  const running = server?.status === "running";
+  const { data: query } = useSWR(
+    server ? ["control-query", serverId, running] : null,
+    () => controlApi.query(serverId),
+    { refreshInterval: running ? 10000 : 0, shouldRetryOnError: false },
+  );
   const [pending, setPending] = useState<ControlAction | null>(null);
   const [host, setHost] = useState("");
 
@@ -254,6 +261,12 @@ function ControlPanel({ serverId, onSignedOut }: { serverId: string; onSignedOut
           );
         })}
       </dl>
+
+      {query?.supported && (
+        <div className="mb-6">
+          <PlayerList query={query} running={running} compact />
+        </div>
+      )}
 
       <div className="grid grid-cols-3 gap-2">
         <Button disabled={busy || !canStart} onClick={() => act("start")}>

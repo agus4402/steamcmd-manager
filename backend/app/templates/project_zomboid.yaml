@@ -104,3 +104,7 @@ workshop:
     Enabled mods are applied on the next start or restart, in the order set in
     Load order (WorkshopItems, Mods and Map in pzserver.ini are managed by the panel).
 update_on_start: true
+
+# Live info (players) via Steam A2S on the Steam port (PORT_game).
+query:
+  port: game

@@ -229,6 +229,29 @@ export interface Stats {
   online_cpus: number;
 }
 
+/** Live game info from the server's own query protocol (Steam A2S). */
+export interface ServerQuery {
+  /** False when the game's template declares no query protocol. */
+  supported: boolean;
+  /** True when the game answered the query. */
+  online: boolean;
+  query_port: number | null;
+  error: string | null;
+  info: {
+    name: string;
+    map: string;
+    game: string;
+    version: string;
+    players: number;
+    max_players: number;
+    bots: number;
+    password: boolean;
+    vac: boolean;
+  } | null;
+  /** null when the game doesn't answer player-list queries. */
+  players: { name: string; score: number; duration: number }[] | null;
+}
+
 export type IntegrationStatus = "not_connected" | "pending" | "connected" | "error";
 
 export interface Integration {

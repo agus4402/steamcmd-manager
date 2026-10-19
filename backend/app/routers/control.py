@@ -25,8 +25,9 @@ from app.schemas.control import (
     ControlToken,
     PublicServerOut,
 )
+from app.schemas.server import QueryOut
 from app.services import auth as auth_service
-from app.services import server_service
+from app.services import query_service, server_service
 from app.services.integration_service import PANEL_TUNNEL_NAME
 from app.services.template_loader import TemplateError, get_template
 
@@ -156,6 +157,12 @@ async def info(
 ) -> PublicServerOut:
     await server_service.reconcile(db, server)
     return await _public(db, server)
+
+
+@router.get("/query", response_model=QueryOut)
+async def query(server: Server = Depends(require_server_access)) -> QueryOut:
+    """Live player count/list, so players can see who's on before a restart."""
+    return await query_service.query_server(server)
 
 
 @router.post("/start", response_model=PublicServerOut)
