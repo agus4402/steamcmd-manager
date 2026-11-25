@@ -24,7 +24,9 @@ import {
   AlertTriangle,
   ArrowDown,
   ArrowUp,
+  Download,
   GripVertical,
+  ListOrdered,
   Map as MapIcon,
   Save,
   Search,
@@ -33,10 +35,12 @@ import {
 } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import type { LoadOrderEntry, MapEntry } from "@/lib/types";
+import { formatModPreset } from "@/lib/modPreset";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { EmptyState } from "@/components/common/states";
 import { cn } from "@/lib/utils";
+import { ImportOrderModal } from "./ImportOrderModal";
 
 interface LoadOrderListProps {
   serverId: string;
@@ -52,6 +56,8 @@ interface LoadOrderListProps {
   onOpenItem?: (itemId: string) => void;
   /** Look up a required mod that isn't installed (search it in Browse). */
   onSearchMissing?: (modId: string) => void;
+  /** Preset name used when exporting the order (e.g. the server's name). */
+  presetName?: string;
 }
 
 /** A load-order problem of one mod, computed live while editing. */
@@ -95,11 +101,13 @@ export function LoadOrderList({
   onSaved,
   onOpenItem,
   onSearchMissing,
+  presetName = "mods",
 }: LoadOrderListProps) {
   const q = query.trim().toLowerCase();
   const [rows, setRows] = useState(entries);
   const [mapRows, setMapRows] = useState(maps);
   const [saving, setSaving] = useState(false);
+  const [importing, setImporting] = useState(false);
   const sensors = useDragSensors();
   // Stable ids keep dnd-kit's generated aria attributes equal on server and client.
   const dndId = useId();
@@ -126,6 +134,20 @@ export function LoadOrderList({
   function move(from: number, to: number) {
     if (to < 0 || to >= rows.length || from === to) return;
     setRows((prev) => arrayMove(prev, from, to));
+  }
+
+  /** Downloads the enabled mods, in order, in the game's preset format. */
+  function exportOrder() {
+    const text = formatModPreset(
+      presetName,
+      rows.filter((r) => r.enabled).map((r) => r.mod_id),
+    );
+    const url = URL.createObjectURL(new Blob([text], { type: "text/plain" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${presetName.replace(/[^\w.-]+/g, "_") || "mods"}-load-order.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
   }
 
   async function save() {
@@ -164,7 +186,19 @@ export function LoadOrderList({
           {enabledCount} of {rows.length} mods enabled · loaded top to bottom
           {q && ` · showing ${visible.length} matching`}
         </span>
-        <span className="ml-auto flex gap-2">
+        <span className="ml-auto flex flex-wrap items-center gap-2">
+          <Button variant="outline" size="sm" onClick={() => setImporting(true)}>
+            <ListOrdered /> Import order
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={exportOrder}
+            disabled={enabledCount === 0}
+            title="Download the enabled mods in order, in the game's mod list format"
+          >
+            <Download /> Export
+          </Button>
           {sandboxPath && (
             <Link
               href={`/servers/${serverId}/config?file=${encodeURIComponent(sandboxPath)}&section=__mods__`}
@@ -289,6 +323,27 @@ export function LoadOrderList({
           <Save /> {saving ? "Saving…" : "Save order"}
         </Button>
       </div>
+
+      {importing && (
+        <ImportOrderModal
+          rows={rows}
+          onClose={() => setImporting(false)}
+          onApply={(next) => {
+            setRows(next);
+            toast.success("Order imported", {
+              description: "Review it and click Save order to apply it.",
+            });
+          }}
+          onSearchMissing={
+            onSearchMissing
+              ? (id) => {
+                  setImporting(false);
+                  onSearchMissing(id);
+                }
+              : undefined
+          }
+        />
+      )}
     </div>
   );
 }

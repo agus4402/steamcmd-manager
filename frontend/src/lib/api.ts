@@ -72,6 +72,8 @@ const REQUEST_TIMEOUT_MS = 15000;
 // Volume operations (backup/restore/clone) tar or copy the whole data dir and
 // can legitimately run for many minutes — they get a much longer ceiling.
 const LONG_OP_TIMEOUT_MS = 20 * 60 * 1000;
+// Bulk mod import: batched Steam metadata lookups (downloads run in the background).
+const IMPORT_TIMEOUT_MS = 60 * 1000;
 // Graceful stop (template stop_timeout ≤ 600s) + container recreate.
 export const STOP_TIMEOUT_MS = 11 * 60 * 1000;
 
@@ -279,16 +281,19 @@ export const api = {
     if (params.sortBy) qs.set("sortBy", params.sortBy);
     return request<SearchResult>(`/api/workshop/search?${qs.toString()}`);
   },
+  // Big collections mean a few batched Steam lookups: allow more than a normal call.
   importPreview: (id: string, input: string) =>
-    request<ImportPreview>(`/api/servers/${id}/mods/import`, {
-      method: "POST",
-      body: JSON.stringify({ input }),
-    }),
+    request<ImportPreview>(
+      `/api/servers/${id}/mods/import`,
+      { method: "POST", body: JSON.stringify({ input }) },
+      IMPORT_TIMEOUT_MS,
+    ),
   importInstall: (id: string, input: string, install: string[]) =>
-    request<ImportResult>(`/api/servers/${id}/mods/import`, {
-      method: "POST",
-      body: JSON.stringify({ input, install }),
-    }),
+    request<ImportResult>(
+      `/api/servers/${id}/mods/import`,
+      { method: "POST", body: JSON.stringify({ input, install }) },
+      IMPORT_TIMEOUT_MS,
+    ),
 
   notifications: {
     list: (unreadOnly = false, limit = 100) =>

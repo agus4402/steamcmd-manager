@@ -113,9 +113,13 @@ class SteamWorkshopProvider(WorkshopProvider):
         return SearchResult(items=summaries, total=total, page=page)
 
     async def get_summaries(self, item_ids: list[str]) -> list[ModSummary]:
-        rows = await api.get_published_file_details(item_ids)
-        # result == 1 means the item exists and is visible.
-        return [_to_summary(r) for r in rows if r.get("result") == 1]
+        out: list[ModSummary] = []
+        # Chunked so a big collection never becomes one oversized request.
+        for i in range(0, len(item_ids), api.BATCH_SIZE):
+            rows = await api.get_published_file_details(item_ids[i : i + api.BATCH_SIZE])
+            # result == 1 means the item exists and is visible.
+            out += [_to_summary(r) for r in rows if r.get("result") == 1]
+        return out
 
     async def get_details(self, item_id: str) -> ModDetails:
         if api.has_api_key():
@@ -131,6 +135,17 @@ class SteamWorkshopProvider(WorkshopProvider):
             return []
         rows = await api.get_details([item_id])
         return _dependencies(rows[0]) if rows else []
+
+    async def get_dependencies_many(self, item_ids: list[str]) -> dict[str, list[Dependency]]:
+        if not api.has_api_key():
+            return {}
+        out: dict[str, list[Dependency]] = {}
+        for i in range(0, len(item_ids), api.BATCH_SIZE):
+            for row in await api.get_details(item_ids[i : i + api.BATCH_SIZE]):
+                deps = _dependencies(row)
+                if deps:
+                    out[str(row.get("publishedfileid") or "")] = deps
+        return out
 
     async def resolve_collection(self, collection_id: str) -> list[str]:
         result = await api.get_collection_details([collection_id])

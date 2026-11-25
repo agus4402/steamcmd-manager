@@ -57,7 +57,9 @@ export function ImportModsModal({ serverId, initialInput, onClose, onInstalled }
     setInstalling(true);
     try {
       const res = await api.importInstall(serverId, input, ids);
-      toast.success(`Queued ${res.queued.length} mod${res.queued.length === 1 ? "" : "s"}`);
+      toast.success(`Queued ${res.queued.length} mod${res.queued.length === 1 ? "" : "s"}`, {
+        description: "They download in the background; missing dependencies are added automatically.",
+      });
       onInstalled();
       onClose();
     } catch (e) {

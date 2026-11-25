@@ -23,6 +23,8 @@ settings = get_settings()
 
 _BASE = "https://api.steampowered.com"
 _TIMEOUT = httpx.Timeout(20.0)
+# Max item ids per batch call (keeps requests/URLs well within Steam's limits).
+BATCH_SIZE = 100
 
 # UI sort -> EPublishedFileQueryType integer.
 _QUERY_TYPE = {

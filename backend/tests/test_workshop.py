@@ -123,30 +123,144 @@ def test_require_key_ok_with_key(monkeypatch):
 
 
 class _FakeProvider:
-    """Graph with a cycle (A->B->C->A) and a duplicate edge (A->B twice)."""
+    """Graph with a cycle (A->B->C->A), a duplicate edge (A->B twice) and a
+    second root (X->Y->B) sharing a dependency with the first."""
 
     id = "steam"
     _graph = {
         "A": ["B", "C", "B"],
-        "B": ["C"],
+        "B": ["C", "D"],
         "C": ["A"],  # cycle back to root
+        "X": ["Y"],
+        "Y": ["B"],
     }
 
-    async def get_dependencies(self, item_id: str):
-        return [Dependency(item_id=i) for i in self._graph.get(item_id, [])]
+    def __init__(self):
+        self.calls: list[list[str]] = []
+
+    async def get_dependencies_many(self, item_ids):
+        self.calls.append(list(item_ids))
+        return {
+            i: [Dependency(item_id=d) for d in self._graph[i]]
+            for i in item_ids
+            if i in self._graph
+        }
 
 
-def test_resolve_dependency_ids_handles_cycle_and_dedup(monkeypatch):
+def test_resolve_dependencies_handles_cycle_and_dedup(monkeypatch):
     monkeypatch.setattr(ws, "get_provider", lambda *_: _FakeProvider())
-    result = asyncio.run(ws._resolve_dependency_ids("A"))
+    result = asyncio.run(ws._resolve_dependencies(["A"]))
     # Root excluded, each dep once, no infinite loop from the cycle.
-    assert sorted(result) == ["B", "C"]
+    assert result == {"B": "A", "C": "A", "D": "A"}
 
 
-def test_resolve_dependency_ids_empty_when_no_deps(monkeypatch):
+def test_resolve_dependencies_batches_per_level(monkeypatch):
+    fake = _FakeProvider()
+    monkeypatch.setattr(ws, "get_provider", lambda *_: fake)
+    result = asyncio.run(ws._resolve_dependencies(["A", "X"]))
+    assert result == {"B": "A", "C": "A", "D": "A", "Y": "X"}
+    # One lookup per depth level, never one per item.
+    assert fake.calls == [["A", "X"], ["B", "C", "Y"], ["D"]]
+
+
+def test_resolve_dependencies_empty_when_no_deps(monkeypatch):
     class _Empty:
-        async def get_dependencies(self, item_id: str):
-            return []
+        async def get_dependencies_many(self, item_ids):
+            return {}
 
     monkeypatch.setattr(ws, "get_provider", lambda *_: _Empty())
-    assert asyncio.run(ws._resolve_dependency_ids("A")) == []
+    assert asyncio.run(ws._resolve_dependencies(["A"])) == {}
+
+
+def test_steam_dependencies_many_is_chunked(monkeypatch):
+    calls: list[int] = []
+
+    async def fake_get_details(ids):
+        calls.append(len(ids))
+        return [{"publishedfileid": i, "children": [{"publishedfileid": "9"}]} for i in ids]
+
+    monkeypatch.setattr(api.settings, "steam_api_key", "KEY")
+    monkeypatch.setattr(api, "get_details", fake_get_details)
+    ids = [str(i) for i in range(1, 251)]
+    out = asyncio.run(provider.SteamWorkshopProvider().get_dependencies_many(ids))
+    assert calls == [100, 100, 50]
+    assert len(out) == 250 and out["1"][0].item_id == "9"
+
+
+def test_steam_dependencies_many_without_key(monkeypatch):
+    monkeypatch.setattr(api.settings, "steam_api_key", "")
+    assert asyncio.run(provider.SteamWorkshopProvider().get_dependencies_many(["1"])) == {}
+
+
+# -- bulk install is non-blocking ---------------------------------------------
+
+
+class _FakeSession:
+    def __init__(self, existing: list[str]):
+        self.added: list = []
+        self.commits = 0
+        self._existing = existing
+
+    async def execute(self, _stmt):
+        class _Rows:
+            def __init__(self, ids):
+                self._ids = ids
+
+            def all(self):
+                return [(i,) for i in self._ids]
+
+        return _Rows(self._existing)
+
+    def add(self, obj):
+        obj.id = f"row-{len(self.added)}"
+        self.added.append(obj)
+
+    async def commit(self):
+        self.commits += 1
+
+    async def refresh(self, _obj):
+        pass
+
+
+def test_import_install_batches_and_defers_dependencies(monkeypatch):
+    summary_calls: list[list[str]] = []
+    downloads: list[str] = []
+    dep_jobs: list[list[str]] = []
+
+    class _Provider:
+        async def get_summaries(self, ids):
+            summary_calls.append(list(ids))
+            return []
+
+    async def fake_download(server_id, mod_id):
+        downloads.append(mod_id)
+
+    async def fake_deps(server_id, root_ids):
+        dep_jobs.append(root_ids)
+
+    monkeypatch.setattr(ws, "get_provider", lambda *_: _Provider())
+    monkeypatch.setattr(ws, "_download_job", fake_download)
+    monkeypatch.setattr(ws, "_enqueue_dependencies", fake_deps)
+
+    class _Server:
+        id = "srv"
+        workshop_app_id = 108600
+
+    ids = [str(1000 + i) for i in range(120)]
+
+    async def run():
+        session = _FakeSession(existing=["1005"])
+        queued, skipped = await ws.import_install(session, _Server(), ids + ["1001"])
+        await asyncio.sleep(0)  # let the spawned background tasks run
+        return session, queued, skipped
+
+    session, queued, skipped = asyncio.run(run())
+    assert skipped == ["1005", "1001"]  # already installed + repeated
+    assert [m.item_id for m in queued] == [i for i in ids if i != "1005"]
+    assert session.commits == 1
+    assert summary_calls == [[i for i in ids if i != "1005"]]  # one batched lookup
+    # Creation order is kept in created_at (sorting by "added" keeps the collection order).
+    stamps = [m.created_at for m in queued]
+    assert stamps == sorted(stamps) and len(set(stamps)) == len(stamps)
+    assert len(downloads) == 119
+    assert dep_jobs == [[i for i in ids if i != "1005"]]

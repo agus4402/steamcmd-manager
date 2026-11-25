@@ -112,6 +112,16 @@ class WorkshopProvider(ABC):
         """Direct (one level) dependencies for an item. The service walks these
         recursively; providers need not recurse."""
 
+    async def get_dependencies_many(self, item_ids: list[str]) -> dict[str, list[Dependency]]:
+        """Direct dependencies of several items at once (items without any may be
+        omitted). Providers with a batch API should override this."""
+        out: dict[str, list[Dependency]] = {}
+        for iid in item_ids:
+            deps = await self.get_dependencies(iid)
+            if deps:
+                out[iid] = deps
+        return out
+
     @abstractmethod
     async def resolve_collection(self, collection_id: str) -> list[str]:
         """Return the member item ids of a collection (empty if not a collection)."""

@@ -11,6 +11,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+from collections.abc import Coroutine
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -45,6 +49,18 @@ _TOKEN_RE = re.compile(r"\d{2,20}")
 _MAX_CONCURRENT_DOWNLOADS = 2
 _DEP_DEPTH_CAP = 5
 _download_sem: asyncio.Semaphore | None = None
+
+
+# Strong refs to fire-and-forget tasks: the loop only keeps weak ones, so an
+# unreferenced task can be garbage-collected mid-run.
+_background: set[asyncio.Task] = set()
+
+
+def _spawn(coro: Coroutine[Any, Any, Any]) -> asyncio.Task:
+    task = asyncio.create_task(coro)
+    _background.add(task)
+    task.add_done_callback(_background.discard)
+    return task
 
 
 def _sem() -> asyncio.Semaphore:
@@ -128,14 +144,17 @@ def _apply_summary(mod: WorkshopMod, s: ModSummary) -> None:
     mod.time_updated_remote = s.time_updated or mod.time_updated_remote
 
 
-async def _fetch_summary(item_id: str, provider_id: str = "steam") -> ModSummary | None:
-    """Best-effort metadata for one item; never raises."""
+async def _fetch_summaries(
+    item_ids: list[str], provider_id: str = "steam"
+) -> dict[str, ModSummary]:
+    """Best-effort batch metadata keyed by item id; never raises."""
+    if not item_ids:
+        return {}
     try:
-        rows = await _provider(provider_id).get_summaries([item_id])
-        return rows[0] if rows else None
+        return {s.item_id: s for s in await _provider(provider_id).get_summaries(item_ids)}
     except WorkshopProviderError as exc:
-        logger.info("metadata lookup failed for %s: %s", item_id, exc)
-        return None
+        logger.info("metadata lookup failed for %d item(s): %s", len(item_ids), exc)
+        return {}
 
 
 async def get_mod_details(item_id: str, provider_id: str = "steam") -> ModDetails:
@@ -185,76 +204,101 @@ async def _existing_item_ids(session: AsyncSession, server_id: str) -> set[str]:
     return {r[0] for r in rows.all()}
 
 
-async def _resolve_dependency_ids(root_item_id: str) -> list[str]:
-    """Transitive dependency item ids for a mod (excludes the root). Best-effort:
-    returns [] when the provider can't resolve deps (e.g. no API key). Guards
-    against cycles and runaway depth."""
+async def _resolve_dependencies(root_ids: list[str]) -> dict[str, str]:
+    """Transitive dependencies of several items as ``{dep_id: required_by}``,
+    where ``required_by`` is the root item that pulled it in (discovery order;
+    roots excluded). One batched lookup per depth level. Best-effort: {} when
+    the provider can't resolve deps (e.g. no API key). Guards against cycles
+    and runaway depth."""
     provider = _provider()
-    seen: set[str] = {root_item_id}
-    order: list[str] = []
-    frontier: list[tuple[str, int]] = [(root_item_id, 0)]
-    while frontier:
-        item, depth = frontier.pop(0)
-        if depth >= _DEP_DEPTH_CAP:
-            continue
+    seen: set[str] = set(root_ids)
+    found: dict[str, str] = {}
+    frontier: dict[str, str] = {r: r for r in root_ids}  # item -> its root
+    for _ in range(_DEP_DEPTH_CAP):
+        if not frontier:
+            break
         try:
-            deps = await provider.get_dependencies(item)
+            deps_by_item = await provider.get_dependencies_many(list(frontier))
         except WorkshopProviderError as exc:
-            logger.info("dependency lookup failed for %s: %s", item, exc)
-            continue
-        for d in deps:
-            if d.item_id not in seen:
-                seen.add(d.item_id)
-                order.append(d.item_id)
-                frontier.append((d.item_id, depth + 1))
-    return order
+            logger.info("dependency lookup failed: %s", exc)
+            break
+        nxt: dict[str, str] = {}
+        for item, root in frontier.items():
+            for d in deps_by_item.get(item, []):
+                if d.item_id not in seen:
+                    seen.add(d.item_id)
+                    found[d.item_id] = root
+                    nxt[d.item_id] = root
+        frontier = nxt
+    return found
 
 
-async def _create_mod(
-    session: AsyncSession,
-    server: Server,
-    item_id: str,
-    *,
-    name: str | None = None,
-    is_dependency: bool = False,
-    required_by: str | None = None,
-    resolve_deps: bool = True,
-) -> WorkshopMod:
-    """Create a mod row (with best-effort metadata), enqueue its download, and —
-    for top-level mods — auto-enqueue any missing transitive dependencies."""
-    mod = WorkshopMod(
-        server_id=server.id,
-        item_id=item_id,
-        name=name,
-        status="queued",
-        is_dependency=is_dependency,
-        required_by=required_by,
-    )
-    summary = await _fetch_summary(item_id)
-    if summary is not None:
-        _apply_summary(mod, summary)
-    session.add(mod)
+@dataclass(slots=True)
+class _NewMod:
+    item_id: str
+    name: str | None = None
+    is_dependency: bool = False
+    required_by: str | None = None
+
+
+async def _enqueue(
+    session: AsyncSession, server: Server, new: list[_NewMod], *, resolve_deps: bool = True
+) -> list[WorkshopMod]:
+    """Create rows for ``new`` (one batched metadata lookup, one commit), queue
+    their downloads and return right away. Missing transitive dependencies are
+    resolved and queued in the background, so a big collection never holds the
+    request open."""
+    if not new:
+        return []
+    summaries = await _fetch_summaries([n.item_id for n in new])
+    # Distinct, increasing timestamps keep the given order (e.g. a collection's)
+    # wherever mods are sorted by when they were added.
+    base = datetime.now(timezone.utc)
+    mods: list[WorkshopMod] = []
+    for i, n in enumerate(new):
+        mod = WorkshopMod(
+            server_id=server.id,
+            item_id=n.item_id,
+            name=n.name,
+            status="queued",
+            is_dependency=n.is_dependency,
+            required_by=n.required_by,
+            created_at=base + timedelta(microseconds=i),
+        )
+        if (s := summaries.get(n.item_id)) is not None:
+            _apply_summary(mod, s)
+        session.add(mod)
+        mods.append(mod)
     await session.commit()
-    await session.refresh(mod)
-    asyncio.create_task(_download_job(server.id, mod.id))
-
+    for mod in mods:
+        await session.refresh(mod)
+        _spawn(_download_job(server.id, mod.id))
     if resolve_deps:
-        dep_ids = await _resolve_dependency_ids(item_id)
-        if dep_ids:
-            existing = await _existing_item_ids(session, server.id)
-            for dep in dep_ids:
-                if dep in existing:
-                    continue
-                existing.add(dep)
-                await _create_mod(
-                    session,
-                    server,
-                    dep,
-                    is_dependency=True,
-                    required_by=item_id,
-                    resolve_deps=False,
-                )
-    return mod
+        _spawn(_enqueue_dependencies(server.id, [n.item_id for n in new]))
+    return mods
+
+
+async def _enqueue_dependencies(server_id: str, root_ids: list[str]) -> None:
+    """Background job: queue the missing transitive dependencies of ``root_ids``."""
+    try:
+        found = await _resolve_dependencies(root_ids)
+        if not found:
+            return
+        async with SessionLocal() as session:
+            server = await session.get(Server, server_id)
+            if server is None:
+                return
+            existing = await _existing_item_ids(session, server_id)
+            new = [
+                _NewMod(item_id=dep, is_dependency=True, required_by=root)
+                for dep, root in found.items()
+                if dep not in existing
+            ]
+            if new:
+                await _enqueue(session, server, new, resolve_deps=False)
+                logger.info("queued %d dependency item(s) on %s", len(new), server_id)
+    except Exception:  # noqa: BLE001 — background job: never crash the panel
+        logger.exception("dependency resolution failed on %s", server_id)
 
 
 async def add_mod(
@@ -270,7 +314,7 @@ async def add_mod(
             raise IsCollection(item_id)
     except WorkshopProviderError:
         pass  # can't tell: treat it as a plain item
-    return await _create_mod(session, server, item_id, name=name)
+    return (await _enqueue(session, server, [_NewMod(item_id=item_id, name=name)]))[0]
 
 
 async def import_preview(server: Server, raw: str) -> tuple[list[dict], list[str]]:
@@ -300,12 +344,7 @@ async def import_preview(server: Server, raw: str) -> tuple[list[dict], list[str
     async with SessionLocal() as session:
         installed = await _existing_item_ids(session, server.id)
 
-    summaries: dict[str, ModSummary] = {}
-    try:
-        for s in await _provider().get_summaries(ids):
-            summaries[s.item_id] = s
-    except WorkshopProviderError as exc:
-        logger.info("import metadata lookup failed: %s", exc)
+    summaries = await _fetch_summaries(ids)
 
     items: list[dict] = []
     for iid in ids:
@@ -327,19 +366,20 @@ async def import_preview(server: Server, raw: str) -> tuple[list[dict], list[str
 async def import_install(
     session: AsyncSession, server: Server, item_ids: list[str]
 ) -> tuple[list[WorkshopMod], list[str]]:
-    """Queue the given item ids for install, skipping already-installed ones."""
+    """Queue the given item ids for install, skipping already-installed ones.
+    Returns as soon as the rows exist; downloads and dependency resolution run
+    in the background."""
     if server.workshop_app_id is None:
         raise WorkshopError("this game does not support Steam Workshop")
     installed = await _existing_item_ids(session, server.id)
-    queued: list[WorkshopMod] = []
+    to_add: list[str] = []
     skipped: list[str] = []
-    seen: set[str] = set()
     for iid in item_ids:
-        if iid in installed or iid in seen:
+        if iid in installed or iid in to_add:
             skipped.append(iid)
             continue
-        seen.add(iid)
-        queued.append(await _create_mod(session, server, iid))
+        to_add.append(iid)
+    queued = await _enqueue(session, server, [_NewMod(item_id=i) for i in to_add])
     return queued, skipped
 
 
@@ -367,7 +407,7 @@ async def retry_mod(session: AsyncSession, server: Server, mod: WorkshopMod) -> 
     mod.error_message = None
     await session.commit()
     await session.refresh(mod)
-    asyncio.create_task(_download_job(server.id, mod.id))
+    _spawn(_download_job(server.id, mod.id))
     return mod
 
 
@@ -444,7 +484,7 @@ async def _requeue(session: AsyncSession, server: Server, mod: WorkshopMod) -> W
     mod.error_message = None
     await session.commit()
     await session.refresh(mod)
-    asyncio.create_task(_download_job(server.id, mod.id))
+    _spawn(_download_job(server.id, mod.id))
     return mod
 
 

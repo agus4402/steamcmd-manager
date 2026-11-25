@@ -367,6 +367,7 @@ export default function ServerWorkshopPage() {
           onSaved={() => mutateLoadOrder()}
           onOpenItem={setDetailItemId}
           onSearchMissing={searchInBrowse}
+          presetName={server.name}
         />
       ) : tab === "browse" ? (
         <WorkshopBrowse
