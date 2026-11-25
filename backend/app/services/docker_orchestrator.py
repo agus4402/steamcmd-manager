@@ -219,13 +219,21 @@ class DockerOrchestrator:
 
     # -- workshop -------------------------------------------------------------
 
-    def download_workshop_item(
-        self, server_id: str, app_id: int, item_id: str, install_path: str
+    def download_workshop_items(
+        self, server_id: str, app_id: int, item_ids: list[str], install_path: str
     ) -> tuple[int, str]:
+        """Download several items in one steamcmd session. The logs carry a
+        ``[workshop-result] <id> ok|failed <reason>`` line per item."""
         data = self._request(
             "POST",
             f"/servers/{server_id}/workshop/download",
-            json={"app_id": app_id, "item_id": item_id, "install_path": install_path},
+            json={
+                "app_id": app_id,
+                "item_ids": item_ids,
+                # Read by an agent older than the batch support (first item only).
+                "item_id": item_ids[0],
+                "install_path": install_path,
+            },
             timeout=_INSTALL_WAIT_TIMEOUT,
         ).json()
         return data["code"], data["logs"]

@@ -24,7 +24,7 @@ from app.routers import (
     workshop,
 )
 from app.routers.auth import require_user
-from app.services import integration_service, scheduler_service
+from app.services import integration_service, scheduler_service, workshop_service
 from app.services.auth import seed_admin
 from app.services.docker_orchestrator import orchestrator
 from app.services.server_service import recover_inflight_on_boot
@@ -58,6 +58,11 @@ async def lifespan(_: FastAPI):
             await recover_inflight_on_boot(session)
         except Exception:  # noqa: BLE001 — recovery is best-effort, never block boot
             logger.exception("in-flight recovery skipped")
+    # Workshop downloads queued before a restart (the queue lives in memory).
+    try:
+        await workshop_service.resume_queue_on_boot()
+    except Exception:  # noqa: BLE001 — best-effort, never block boot
+        logger.exception("workshop queue resume skipped")
 
     # Start the cron scheduler and load enabled actions (best-effort).
     try:

@@ -29,8 +29,17 @@ class StopRequest(BaseModel):
 
 class WorkshopDownloadRequest(BaseModel):
     app_id: int
-    item_id: str
+    # Items to download in one steamcmd session (one login). `item_id` is the
+    # single-item form older panels send.
+    item_ids: list[str] = Field(default_factory=list, max_length=50)
+    item_id: str | None = None
     install_path: str = "steamapps/workshop"
+
+    def ids(self) -> list[str]:
+        out = list(dict.fromkeys(self.item_ids))
+        if self.item_id and self.item_id not in out:
+            out.insert(0, self.item_id)
+        return out
 
 
 class CreateResponse(BaseModel):

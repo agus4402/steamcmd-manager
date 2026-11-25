@@ -84,20 +84,61 @@ run_steamcmd() {
 
         log "steamcmd attempt ${attempt} failed (exit ${rc})"
         attempt=$((attempt + 1))
-        [ "${attempt}" -le "${max_attempts}" ] && sleep 5
+        [ "${attempt}" -le "${max_attempts}" ] && sleep "${WS_RETRY_SLEEP:-5}"
     done
 
     log "ERROR: steamcmd failed for App ID ${STEAM_APP_ID} after ${max_attempts} attempts (exit ${rc})"
     exit "${rc}"
 }
 
+# Machine-readable per-item outcome, parsed by the panel:
+#   [workshop-result] <item_id> ok
+#   [workshop-result] <item_id> failed <reason>
+ws_result() { echo "[workshop-result] $*"; }
+
+# install_workshop_item ITEM — copy a downloaded item into the server's data
+# volume. Prints a result line; returns non-zero on failure.
+install_workshop_item() {
+    local item="$1"
+    # steamcmd writes items to <steam root>/steamapps/workshop/content/<app>/<item>.
+    # The root varies by build, so probe the known locations.
+    local rel="steamapps/workshop/content/${WORKSHOP_APP_ID}/${item}"
+    local src=""
+    for base in "/home/steam/Steam" "${STEAMCMD_DIR}" "/home/steam/.steam/steam"; do
+        if [ -d "${base}/${rel}" ]; then src="${base}/${rel}"; break; fi
+    done
+    if [ -z "${src}" ]; then
+        ws_result "${item}" failed "not found on disk after steamcmd reported success"
+        return 1
+    fi
+    # An item with folders but no files is a failed download, not a mod.
+    if [ -z "$(find "${src}" -type f -print -quit)" ]; then
+        ws_result "${item}" failed "downloaded no files"
+        return 1
+    fi
+    local dest="${INSTALL_DIR}/${WORKSHOP_INSTALL_PATH:-steamapps/workshop}/${item}"
+    mkdir -p "$(dirname "${dest}")"
+    rm -rf "${dest}"
+    if ! cp -a "${src}" "${dest}"; then
+        ws_result "${item}" failed "could not copy into ${dest} (disk full?)"
+        return 1
+    fi
+    ws_result "${item}" ok
+}
+
 run_workshop_download() {
-    # One-shot Steam Workshop item download. Driven by:
+    # One-shot Steam Workshop download of one or more items. Driven by:
     #   WORKSHOP_APP_ID       Steam app whose workshop content is fetched
-    #   WORKSHOP_ITEM_ID      workshop item id to download
-    #   WORKSHOP_INSTALL_PATH where to place it under INSTALL_DIR (relative)
-    if [ -z "${WORKSHOP_APP_ID:-}" ] || [ -z "${WORKSHOP_ITEM_ID:-}" ]; then
-        log "ERROR: WORKSHOP_APP_ID and WORKSHOP_ITEM_ID are required"
+    #   WORKSHOP_ITEM_IDS     ";"/space-separated item ids (or WORKSHOP_ITEM_ID)
+    #   WORKSHOP_INSTALL_PATH where to place them under INSTALL_DIR (relative)
+    local ids_raw="${WORKSHOP_ITEM_IDS:-${WORKSHOP_ITEM_ID:-}}"
+    local pending=()
+    local id
+    for id in ${ids_raw//;/ }; do
+        if [[ "${id}" =~ ^[0-9]{1,20}$ ]]; then pending+=("${id}"); fi
+    done
+    if [ -z "${WORKSHOP_APP_ID:-}" ] || [ "${#pending[@]}" -eq 0 ]; then
+        log "ERROR: WORKSHOP_APP_ID and WORKSHOP_ITEM_IDS are required"
         exit 2
     fi
 
@@ -110,59 +151,60 @@ run_workshop_download() {
         log "logging in anonymously"
     fi
 
+    # All items go through ONE steamcmd session (one login) per attempt: a login
+    # per item gets throttled by Steam on big collections.
     # steamcmd exits 0 even when a workshop download fails: big items often stop
     # with "ERROR! Download item <id> failed (Timeout)", leaving a partial
-    # download behind (it resumes on the next run). So judge by its output and
-    # retry until it reports "Success. Downloaded item".
-    log "downloading workshop item ${WORKSHOP_ITEM_ID} for app ${WORKSHOP_APP_ID} ..."
+    # download behind (it resumes on the next run). So judge each item by its
+    # "Success. Downloaded item <id>" line and retry only the ones that failed.
+    log "downloading ${#pending[@]} workshop item(s) for app ${WORKSHOP_APP_ID}: ${pending[*]}"
     local max_attempts=6
     local attempt=1
     local out="/tmp/workshop-download.log"
-    local ok=0
-    while [ "${attempt}" -le "${max_attempts}" ]; do
-        log "steamcmd attempt ${attempt}/${max_attempts} for workshop item ${WORKSHOP_ITEM_ID}"
+    local failed=0
+    declare -A reason=()
+    while [ "${#pending[@]}" -gt 0 ] && [ "${attempt}" -le "${max_attempts}" ]; do
+        log "steamcmd attempt ${attempt}/${max_attempts} for ${#pending[@]} item(s)"
+        local cmd_args=()
+        for id in "${pending[@]}"; do
+            cmd_args+=("+workshop_download_item" "${WORKSHOP_APP_ID}" "${id}")
+        done
         set +e
-        "${STEAMCMD_DIR}/steamcmd.sh" \
-            "${login_args[@]}" \
-            +workshop_download_item "${WORKSHOP_APP_ID}" "${WORKSHOP_ITEM_ID}" \
-            +quit 2>&1 | tee "${out}"
+        "${STEAMCMD_DIR}/steamcmd.sh" "${login_args[@]}" "${cmd_args[@]}" +quit 2>&1 | tee "${out}"
         set -e
-        if grep -q "Success. Downloaded item ${WORKSHOP_ITEM_ID}" "${out}"; then
-            ok=1
-            break
-        fi
-        log "download did not complete ($(grep -o 'ERROR!.*' "${out}" | tail -n1 || echo 'no success line')); resuming"
+        local still=()
+        for id in "${pending[@]}"; do
+            if grep -q "Success. Downloaded item ${id}" "${out}"; then
+                install_workshop_item "${id}" || failed=$((failed + 1))
+            else
+                still+=("${id}")
+                # Keep the most specific reason seen across attempts.
+                local err
+                err="$(grep -o "ERROR! Download item ${id} failed.*" "${out}" | tail -n1 || true)"
+                if [ -n "${err}" ]; then
+                    reason["${id}"]="${err}"
+                elif [ -z "${reason[${id}]:-}" ]; then
+                    reason["${id}"]="$(grep -o 'ERROR!.*\|FAILED.*' "${out}" | tail -n1 || true)"
+                fi
+            fi
+        done
+        pending=("${still[@]}")
         attempt=$((attempt + 1))
-        sleep 3
+        if [ "${#pending[@]}" -gt 0 ] && [ "${attempt}" -le "${max_attempts}" ]; then
+            log "${#pending[@]} item(s) did not complete; resuming"
+            sleep "${WS_RETRY_SLEEP:-5}"
+        fi
     done
-    if [ "${ok}" -ne 1 ]; then
-        log "ERROR: workshop item ${WORKSHOP_ITEM_ID} did not finish downloading after ${max_attempts} attempts"
+
+    for id in "${pending[@]}"; do
+        ws_result "${id}" failed "${reason[${id}]:-did not finish downloading after ${max_attempts} attempts}"
+        failed=$((failed + 1))
+    done
+    if [ "${failed}" -gt 0 ]; then
+        log "ERROR: ${failed} workshop item(s) failed"
         exit 5
     fi
-
-    # steamcmd writes items to <steam root>/steamapps/workshop/content/<app>/<item>.
-    # The root varies by build, so probe the known locations.
-    local rel="steamapps/workshop/content/${WORKSHOP_APP_ID}/${WORKSHOP_ITEM_ID}"
-    local src=""
-    for base in "/home/steam/Steam" "${STEAMCMD_DIR}" "/home/steam/.steam/steam"; do
-        if [ -d "${base}/${rel}" ]; then src="${base}/${rel}"; break; fi
-    done
-    if [ -z "${src}" ]; then
-        log "ERROR: downloaded item not found on disk after steamcmd reported success"
-        exit 4
-    fi
-    # An item with folders but no files is a failed download, not a mod.
-    if [ -z "$(find "${src}" -type f -print -quit)" ]; then
-        log "ERROR: workshop item ${WORKSHOP_ITEM_ID} downloaded no files"
-        exit 4
-    fi
-
-    local dest="${INSTALL_DIR}/${WORKSHOP_INSTALL_PATH:-steamapps/workshop}/${WORKSHOP_ITEM_ID}"
-    log "installing workshop item into ${dest}"
-    mkdir -p "$(dirname "${dest}")"
-    rm -rf "${dest}"
-    cp -a "${src}" "${dest}"
-    log "workshop item ${WORKSHOP_ITEM_ID} ready"
+    log "all workshop items ready"
 }
 
 if [ "${WORKSHOP_DOWNLOAD:-0}" = "1" ]; then

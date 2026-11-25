@@ -139,6 +139,24 @@ export default function ServerWorkshopPage() {
   const detailMod = mods.find((m) => m.item_id === detailItemId) ?? null;
   const installedIds = new Set(mods.map((m) => m.item_id));
   const updatesAvailable = mods.filter((m) => m.status === "update_available").length;
+  const failedCount = mods.filter(
+    (m) => m.status === "error" || m.status === "missing_dependency",
+  ).length;
+
+  async function retryFailed() {
+    setBulkBusy(true);
+    try {
+      const queued = await api.retryFailedMods(server.id);
+      toast.success(`Retrying ${queued.length} mod${queued.length === 1 ? "" : "s"}`);
+      await mutate();
+    } catch (e) {
+      toast.error("Retry failed", {
+        description: e instanceof ApiError ? e.message : String(e),
+      });
+    } finally {
+      setBulkBusy(false);
+    }
+  }
 
   async function checkUpdates() {
     setBulkBusy(true);
@@ -390,6 +408,18 @@ export default function ServerWorkshopPage() {
           {updatesAvailable > 0 && (
             <Button size="sm" disabled={bulkBusy} onClick={updateAll}>
               <ArrowUpCircle className="size-4" /> Update all ({updatesAvailable})
+            </Button>
+          )}
+          {failedCount > 0 && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="border-danger/50 text-danger hover:text-danger"
+              disabled={bulkBusy}
+              onClick={retryFailed}
+              title="Queue every failed mod again"
+            >
+              <RotateCw className="size-4" /> Retry failed ({failedCount})
             </Button>
           )}
           <Button variant="secondary" size="sm" disabled={bulkBusy} onClick={sync}>

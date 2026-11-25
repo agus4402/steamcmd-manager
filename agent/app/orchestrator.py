@@ -611,12 +611,14 @@ class DockerOrchestrator:
 
     # -- workshop -------------------------------------------------------------
 
-    def download_workshop_item(
-        self, server_id: str, app_id: int, item_id: str, install_path: str
+    def download_workshop_items(
+        self, server_id: str, app_id: int, item_ids: list[str], install_path: str
     ) -> tuple[int, str]:
-        """Run a one-shot gameserver container that downloads a workshop item via
-        steamcmd and copies it into the server's data volume. Returns (code, logs)."""
-        name = f"gs-ws-{server_id}-{item_id}"
+        """Run a one-shot gameserver container that downloads workshop items via
+        steamcmd (one session for all of them) and copies them into the server's
+        data volume. Returns (code, logs); the logs carry a
+        ``[workshop-result] <id> ok|failed <reason>`` line per item."""
+        name = f"gs-ws-{server_id}-{item_ids[0]}"
         old = self._get(name)
         if old is not None:
             old.remove(force=True)
@@ -627,7 +629,9 @@ class DockerOrchestrator:
         env = {
             "WORKSHOP_DOWNLOAD": "1",
             "WORKSHOP_APP_ID": str(app_id),
-            "WORKSHOP_ITEM_ID": item_id,
+            "WORKSHOP_ITEM_IDS": ";".join(item_ids),
+            # Single-item form for a gameserver image older than the batch support.
+            "WORKSHOP_ITEM_ID": item_ids[0],
             "WORKSHOP_INSTALL_PATH": install_path,
             "STEAM_LOGIN_USER": "anonymous",
             "INSTALL_DIR": "/data",

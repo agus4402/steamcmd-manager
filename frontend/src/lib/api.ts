@@ -256,6 +256,8 @@ export const api = {
     request<WorkshopMod[]>(`/api/servers/${id}/mods/check-updates`, { method: "POST" }),
   updateAllMods: (id: string) =>
     request<WorkshopMod[]>(`/api/servers/${id}/mods/update-all`, { method: "POST" }),
+  retryFailedMods: (id: string) =>
+    request<WorkshopMod[]>(`/api/servers/${id}/mods/retry-failed`, { method: "POST" }),
   syncMods: (id: string) =>
     request<SyncResult>(`/api/servers/${id}/mods/sync`, { method: "POST" }),
   setWorkshopAutoUpdate: (id: string, mode: AutoUpdateMode) =>

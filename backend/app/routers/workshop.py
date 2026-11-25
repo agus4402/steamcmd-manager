@@ -141,6 +141,13 @@ async def update_all(server_id: str, db: AsyncSession = Depends(get_db)) -> list
     return await workshop_service.update_all(db, server)
 
 
+@router.post("/{server_id}/mods/retry-failed", response_model=list[WorkshopModOut])
+async def retry_failed(server_id: str, db: AsyncSession = Depends(get_db)) -> list[WorkshopMod]:
+    """Re-queue every failed mod of the server."""
+    server = await _server_or_404(db, server_id)
+    return await workshop_service.retry_failed(db, server)
+
+
 @router.post("/{server_id}/mods/sync", response_model=SyncResult)
 async def sync_mods(server_id: str, db: AsyncSession = Depends(get_db)) -> SyncResult:
     server = await _server_or_404(db, server_id)

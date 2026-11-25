@@ -331,13 +331,17 @@ async def copy_data(
 async def workshop_download(
     payload: WorkshopDownloadRequest, server_id: str = Depends(valid_server_id)
 ) -> InstallResultResponse:
-    _validate_workshop(payload.item_id, payload.install_path)
+    item_ids = payload.ids()
+    if not item_ids:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "no workshop item ids")
+    for item_id in item_ids:
+        _validate_workshop(item_id, payload.install_path)
     try:
         code, logs = await run_in_threadpool(
-            orchestrator.download_workshop_item,
+            orchestrator.download_workshop_items,
             server_id,
             payload.app_id,
-            payload.item_id,
+            item_ids,
             payload.install_path,
         )
     except DockerError as exc:

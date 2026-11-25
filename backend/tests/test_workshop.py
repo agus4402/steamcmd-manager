@@ -264,3 +264,66 @@ def test_import_install_batches_and_defers_dependencies(monkeypatch):
     assert stamps == sorted(stamps) and len(set(stamps)) == len(stamps)
     assert len(downloads) == 119
     assert dep_jobs == [[i for i in ids if i != "1005"]]
+
+
+# -- batched download queue ---------------------------------------------------
+
+
+def test_parse_download_results():
+    logs = (
+        "[entrypoint] steamcmd attempt 1/6\n"
+        "[workshop-result] 111 ok\n"
+        "Success. Downloaded item 111\n"
+        "[workshop-result] 444 failed ERROR! Download item 444 failed (Timeout).\n"
+        "[workshop-result] 555 failed\n"
+    )
+    assert ws.parse_download_results(logs) == {
+        "111": (True, None),
+        "444": (False, "ERROR! Download item 444 failed (Timeout)."),
+        "555": (False, None),
+    }
+    assert ws.parse_download_results("") == {}
+
+
+def test_queue_batches_per_server_and_waits(monkeypatch):
+    batches: list[tuple[str, list[str]]] = []
+
+    async def fake_batch(server_id, mod_ids):
+        batches.append((server_id, list(mod_ids)))
+        await asyncio.sleep(0)
+
+    monkeypatch.setattr(ws, "_download_batch", fake_batch)
+    monkeypatch.setattr(ws, "_BATCH_SIZE", 3)
+    monkeypatch.setattr(ws, "_pending", [])
+    monkeypatch.setattr(ws, "_worker", None)
+
+    async def run():
+        jobs = [ws._download_job("s1", f"m{i}") for i in range(5)]
+        jobs += [ws._download_job("s2", "x1"), ws._download_job("s1", "m0")]  # m0 twice
+        await asyncio.wait_for(asyncio.gather(*jobs), timeout=2)  # every caller is released
+
+    asyncio.run(run())
+    # One session at a time; same-server batches of 3; the repeated m0 rides along.
+    assert batches == [("s1", ["m0", "m1", "m2"]), ("s1", ["m3", "m4"]), ("s2", ["x1"])]
+
+
+def test_queue_survives_a_crashing_batch(monkeypatch):
+    calls: list[list[str]] = []
+
+    async def boom(server_id, mod_ids):
+        calls.append(mod_ids)
+        if len(calls) == 1:
+            raise RuntimeError("boom")
+
+    monkeypatch.setattr(ws, "_download_batch", boom)
+    monkeypatch.setattr(ws, "_BATCH_SIZE", 1)
+    monkeypatch.setattr(ws, "_pending", [])
+    monkeypatch.setattr(ws, "_worker", None)
+
+    async def run():
+        await asyncio.wait_for(
+            asyncio.gather(ws._download_job("s", "a"), ws._download_job("s", "b")), timeout=2
+        )
+
+    asyncio.run(run())
+    assert calls == [["a"], ["b"]]

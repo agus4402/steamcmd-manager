@@ -44,11 +44,16 @@ _ID_IN_URL_RE = re.compile(r"[?&]id=(\d{2,20})")
 _LONG_NUMBER_RE = re.compile(r"(\d{4,20})")
 _TOKEN_RE = re.compile(r"\d{2,20}")
 
-# Bounded download concurrency: queued mods wait on this semaphore, so the queue
-# is just tasks blocked here. Status shows "queued" until a slot is acquired.
-_MAX_CONCURRENT_DOWNLOADS = 2
+# Download queue: ONE worker drains it, taking up to _BATCH_SIZE queued mods of
+# the same server per steamcmd session. One session at a time because every
+# download shares the steamcmd cache volume (concurrent steamcmd processes on
+# the same Steam root clobber each other), and one login per batch instead of
+# per item because Steam throttles bursts of logins.
+_BATCH_SIZE = 10
 _DEP_DEPTH_CAP = 5
-_download_sem: asyncio.Semaphore | None = None
+_pending: list[tuple[str, str, asyncio.Future[None]]] = []  # (server_id, mod_id, done)
+_worker: asyncio.Task | None = None
+_RESULT_RE = re.compile(r"^\[workshop-result\] (\d+) (ok|failed)(?: (.*))?$", re.MULTILINE)
 
 
 # Strong refs to fire-and-forget tasks: the loop only keeps weak ones, so an
@@ -61,14 +66,6 @@ def _spawn(coro: Coroutine[Any, Any, Any]) -> asyncio.Task:
     _background.add(task)
     task.add_done_callback(_background.discard)
     return task
-
-
-def _sem() -> asyncio.Semaphore:
-    # Lazily created so it binds to the running event loop.
-    global _download_sem
-    if _download_sem is None:
-        _download_sem = asyncio.Semaphore(_MAX_CONCURRENT_DOWNLOADS)
-    return _download_sem
 
 
 class IsCollection(RuntimeError):
@@ -411,41 +408,153 @@ async def retry_mod(session: AsyncSession, server: Server, mod: WorkshopMod) -> 
     return mod
 
 
-async def _download_job(server_id: str, mod_id: str) -> None:
-    # Wait for a download slot (this is the "queue"); the row shows "queued" until
-    # a slot is free, then flips to "downloading".
-    async with _sem():
-        async with SessionLocal() as session:
-            mod = await session.get(WorkshopMod, mod_id)
-            server = await session.get(Server, server_id)
-            if mod is None or server is None:
-                return  # cancelled while queued
-            mod.status = "downloading"
-            await session.commit()
-            item_id = mod.item_id
-            app_id = server.workshop_app_id
-            install_path = _install_path_for(server)
-
-        if app_id is None:
-            await _finish(mod_id, code=2, logs="workshop is not configured for this server")
-            return
-
-        code, logs = -1, ""
-        try:
-            code, logs = await run_in_threadpool(
-                orchestrator.download_workshop_item, server_id, app_id, item_id, install_path
+async def retry_failed(session: AsyncSession, server: Server) -> list[WorkshopMod]:
+    """Re-queue every failed mod of the server (they go out in batches)."""
+    rows = (
+        await session.execute(
+            select(WorkshopMod)
+            .where(
+                WorkshopMod.server_id == server.id,
+                WorkshopMod.status.in_(["error", "missing_dependency"]),
             )
-        except DockerError as exc:
-            logs = f"orchestration error: {exc}"
-            logger.error("workshop download failed for %s/%s: %s", server_id, item_id, exc)
-        except Exception as exc:  # noqa: BLE001 — never let a job crash the panel
-            logs = f"unexpected error: {exc}"
-            logger.exception("workshop download crashed for %s/%s", server_id, item_id)
+            .order_by(WorkshopMod.created_at)
+        )
+    ).scalars().all()
+    for m in rows:
+        m.status = "queued"
+        m.error_message = None
+    await session.commit()
+    for m in rows:
+        _spawn(_download_job(server.id, m.id))
+    return list(rows)
 
-    await _finish(mod_id, code, logs)
-    if code != 0:
+
+async def resume_queue_on_boot() -> int:
+    """Re-queue downloads a restart interrupted (the queue lives in memory)."""
+    async with SessionLocal() as session:
+        rows = (
+            await session.execute(
+                select(WorkshopMod)
+                .where(WorkshopMod.status.in_(["queued", "downloading"]))
+                .order_by(WorkshopMod.created_at)
+            )
+        ).scalars().all()
+        for m in rows:
+            m.status = "queued"
+        await session.commit()
+        for m in rows:
+            _spawn(_download_job(m.server_id, m.id))
+    if rows:
+        logger.info("resumed %d interrupted workshop download(s)", len(rows))
+    return len(rows)
+
+
+async def _download_job(server_id: str, mod_id: str) -> None:
+    """Queue a mod for download and wait until its batch is done. The row shows
+    "queued" until its batch starts, then "downloading"."""
+    done: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+    _pending.append((server_id, mod_id, done))
+    global _worker
+    if _worker is None or _worker.done():
+        _worker = _spawn(_download_worker())
+    await done
+
+
+def _take_batch() -> tuple[str, list[str], list[asyncio.Future[None]]]:
+    """Pop up to _BATCH_SIZE distinct mods of the oldest pending server."""
+    server_id = _pending[0][0]
+    mod_ids: list[str] = []
+    waiters: list[asyncio.Future[None]] = []
+    for entry in list(_pending):
+        sid, mod_id, done = entry
+        if sid != server_id:
+            continue
+        if mod_id not in mod_ids:
+            if len(mod_ids) >= _BATCH_SIZE:
+                continue  # next batch (keep scanning: repeats of taken mods ride along)
+            mod_ids.append(mod_id)
+        _pending.remove(entry)
+        waiters.append(done)
+    return server_id, mod_ids, waiters
+
+
+async def _download_worker() -> None:
+    while _pending:
+        server_id, mod_ids, waiters = _take_batch()
+        try:
+            await _download_batch(server_id, mod_ids)
+        except Exception:  # noqa: BLE001 — never let the queue die
+            logger.exception("workshop batch crashed for %s", server_id)
+        finally:
+            for done in waiters:
+                if not done.done():
+                    done.set_result(None)
+
+
+def parse_download_results(logs: str) -> dict[str, tuple[bool, str | None]]:
+    """Per-item outcome from the download container's ``[workshop-result]`` lines."""
+    return {
+        m.group(1): (m.group(2) == "ok", (m.group(3) or "").strip() or None)
+        for m in _RESULT_RE.finditer(logs or "")
+    }
+
+
+def _tail(logs: str, lines: int = 6) -> str:
+    return "\n".join((logs or "").strip().splitlines()[-lines:])
+
+
+async def _download_batch(server_id: str, mod_ids: list[str]) -> None:
+    async with SessionLocal() as session:
+        server = await session.get(Server, server_id)
+        mods = [m for mid in mod_ids if (m := await session.get(WorkshopMod, mid)) is not None]
+        if server is None or not mods:
+            return  # removed while queued
+        for m in mods:
+            m.status = "downloading"
+        await session.commit()
+        targets = {m.id: m.item_id for m in mods}
+        app_id = server.workshop_app_id
+        install_path = _install_path_for(server)
+
+    if app_id is None:
+        for mod_id in targets:
+            await _finish(mod_id, code=2, logs="workshop is not configured for this server")
+        return
+
+    item_ids = list(dict.fromkeys(targets.values()))
+    code, logs = -1, ""
+    try:
+        code, logs = await run_in_threadpool(
+            orchestrator.download_workshop_items, server_id, app_id, item_ids, install_path
+        )
+    except DockerError as exc:
+        logs = f"orchestration error: {exc}"
+        logger.error("workshop download failed for %s %s: %s", server_id, item_ids, exc)
+    except Exception as exc:  # noqa: BLE001 — never let a job crash the panel
+        logs = f"unexpected error: {exc}"
+        logger.exception("workshop download crashed for %s %s", server_id, item_ids)
+
+    results = parse_download_results(logs)
+    if not results and code == 0 and len(item_ids) == 1:
+        results = {item_ids[0]: (True, None)}  # gameserver image without result lines
+    failed: list[str] = []
+    for mod_id, item_id in targets.items():
+        ok, reason = results.get(item_id, (False, None))
+        if ok:
+            await _finish(mod_id, 0, "")
+        else:
+            failed.append(item_id)
+            await _finish(mod_id, 1, reason or _tail(logs) or "download failed")
+    logger.info(
+        "workshop batch on %s: %d ok, %d failed", server_id, len(targets) - len(failed), len(failed)
+    )
+    if failed:
+        shown = ", ".join(failed[:5]) + ("…" if len(failed) > 5 else "")
         await notification_service.notify(
-            "error", "Workshop install failed", f"Item {item_id} could not be downloaded.", server_id
+            "error",
+            "Workshop install failed",
+            f"{len(failed)} item(s) could not be downloaded ({shown}). Use Retry failed.",
+            server_id,
         )
 
 
