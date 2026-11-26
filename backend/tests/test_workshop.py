@@ -11,6 +11,17 @@ from app.workshop.base import Dependency, WorkshopSort
 from app.workshop.steam import api, provider
 
 
+@pytest.fixture(autouse=True)
+def _no_db_settle(monkeypatch):
+    """The queue worker settles stranded mods in the DB after each batch; these
+    unit tests have no DB."""
+
+    async def noop(mod_ids):
+        return None
+
+    monkeypatch.setattr(ws, "_settle_stranded", noop)
+
+
 # -- parse_item_id ------------------------------------------------------------
 
 
@@ -410,3 +421,44 @@ def test_run_tracking_spans_batches_and_ends_when_drained(monkeypatch):
     # The run holds all 3 mods through both batches, then is dropped.
     assert seen == [({"m0", "m1", "m2"}, ["m0", "m1"]), ({"m0", "m1", "m2"}, ["m2"])]
     assert ws._runs == {} and ws._active == {}
+
+
+def test_batch_records_every_mod_even_if_one_fails(monkeypatch):
+    """A mod whose result can't be recorded (e.g. its inspection collided) must
+    not leave the rest of its batch stuck on "downloading"."""
+    finished: list[str] = []
+
+    async def flaky_finish(mod_id, code, logs):
+        finished.append(mod_id)
+        if mod_id == "m2":
+            raise RuntimeError("IntegrityError: duplicate submod")
+
+    class FakeSession:
+        def __init__(self):
+            self.mods = {
+                f"m{i}": _mod(f"m{i}", str(100 + i), "queued", 1) for i in range(1, 5)
+            }
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def get(self, model, key):
+            if model is ws.Server:
+                srv = ws.Server(id="s", template_id="project_zomboid")
+                srv.workshop_app_id = 108600
+                return srv
+            return self.mods.get(key)
+
+        async def commit(self):
+            pass
+
+    logs = "\n".join(f"[workshop-result] {100 + i} ok" for i in range(1, 5))
+    monkeypatch.setattr(ws, "SessionLocal", FakeSession)
+    monkeypatch.setattr(ws, "_finish", flaky_finish)
+    monkeypatch.setattr(ws.orchestrator, "download_workshop_items", lambda *a: (0, logs))
+
+    asyncio.run(ws._download_batch("s", ["m1", "m2", "m3", "m4"]))
+    assert finished == ["m1", "m2", "m3", "m4"]

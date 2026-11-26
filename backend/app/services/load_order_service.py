@@ -19,7 +19,6 @@ from starlette.concurrency import run_in_threadpool
 from app.models.server import Server
 from app.models.workshop_mod import WorkshopMod
 from app.models.workshop_submod import WorkshopSubmod
-from app.services.docker_orchestrator import DockerError
 from app.services.template_loader import get_template
 from app.workshop.inspectors import INSPECTORS, SubmodInfo, inspect_item
 
@@ -165,12 +164,17 @@ async def ensure_inspected(session: AsyncSession, server: Server) -> None:
             )
         )
     ).all()
+    from app.services.workshop_service import downloading_mod_ids  # avoid import cycle
+
+    busy = downloading_mod_ids()
     for mod in mods:
         if mod.status in ("queued", "downloading") and mod.inspected_branch is None:
             continue  # nothing on disk yet
+        if mod.id in busy:
+            continue  # its download job inspects it when done (racing it collides)
         try:
             await inspect_mod(session, server, mod)
-        except DockerError as exc:
+        except Exception as exc:  # noqa: BLE001 — e.g. a concurrent inspect won the race
             await session.rollback()
             logger.warning("could not inspect %s on %s: %s", mod.item_id, server.id, exc)
 

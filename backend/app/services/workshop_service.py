@@ -515,11 +515,40 @@ async def _download_worker() -> None:
         finally:
             _active.pop(server_id, None)
             _live_cache.pop(server_id, None)
+            try:
+                await _settle_stranded(mod_ids)
+            except Exception:  # noqa: BLE001
+                logger.exception("could not settle stranded mods on %s", server_id)
             if not any(e[0] == server_id for e in _pending):
                 _runs.pop(server_id, None)  # its run is over
             for done in waiters:
                 if not done.done():
                     done.set_result(None)
+
+
+def downloading_mod_ids() -> set[str]:
+    """Mod ids of every batch now downloading (their own job inspects them)."""
+    return {mid for ids, _ in _active.values() for mid in ids}
+
+
+async def _settle_stranded(mod_ids: list[str]) -> None:
+    """Safety net after a batch: a mod still "downloading" lost its result (the
+    batch crashed before recording it). Mark it failed so it can be retried
+    instead of spinning forever."""
+    async with SessionLocal() as session:
+        rows = (
+            await session.execute(
+                select(WorkshopMod).where(
+                    WorkshopMod.id.in_(mod_ids), WorkshopMod.status == "downloading"
+                )
+            )
+        ).scalars().all()
+        for m in rows:
+            m.status = "error"
+            m.error_message = "the download ended but its result was not recorded; retry it"
+        if rows:
+            await session.commit()
+            logger.warning("settled %d stranded workshop mod(s)", len(rows))
 
 
 def parse_download_results(logs: str) -> dict[str, tuple[bool, str | None]]:
@@ -669,16 +698,21 @@ async def _download_batch(server_id: str, mod_ids: list[str]) -> None:
     failed: list[str] = []
     for mod_id, item_id in targets.items():
         ok, reason = results.get(item_id, (False, None))
-        if ok:
-            await _finish(mod_id, 0, "")
-        else:
+        if not ok:
             failed.append(item_id)
             if stale_image and not reason:
                 reason = (
                     "the game-server image is outdated (no per-item results); restart the "
                     "agent or pull the -gameserver image, then retry.\n" + _tail(logs, 3)
                 )
-            await _finish(mod_id, 1, reason or _tail(logs) or "download failed")
+        # One mod failing to record must not strand the rest of the batch.
+        try:
+            if ok:
+                await _finish(mod_id, 0, "")
+            else:
+                await _finish(mod_id, 1, reason or _tail(logs) or "download failed")
+        except Exception:  # noqa: BLE001
+            logger.exception("could not record the result of %s on %s", item_id, server_id)
     logger.info(
         "workshop batch on %s: %d ok, %d failed", server_id, len(targets) - len(failed), len(failed)
     )
@@ -712,9 +746,11 @@ async def _finish(mod_id: str, code: int, logs: str) -> None:
 
             server = await session.get(Server, mod.server_id)
             if server is not None and load_order_service.inspector_for(server):
+                # Best-effort: the load-order view re-inspects anything left
+                # uninspected, so no error here may undo or abort the install.
                 try:
                     await load_order_service.inspect_mod(session, server, mod)
-                except DockerError as exc:
+                except Exception as exc:  # noqa: BLE001
                     await session.rollback()
                     logger.warning("could not inspect %s: %s", mod.item_id, exc)
 
