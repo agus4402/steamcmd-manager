@@ -27,6 +27,8 @@ DEFAULT_STOP_TIMEOUT = 30
 # wait_install can block for a long time (big steamcmd downloads).
 _DEFAULT_TIMEOUT = httpx.Timeout(30.0, read=30.0)
 _INSTALL_WAIT_TIMEOUT = httpx.Timeout(30.0, read=None)
+# Polled by the UI every few seconds: fail fast rather than pile up requests.
+_PROGRESS_TIMEOUT = httpx.Timeout(5.0, read=10.0)
 # Volume tar/copy over a large data dir can take minutes — don't cap the read.
 _BACKUP_TIMEOUT = httpx.Timeout(30.0, read=None)
 
@@ -237,6 +239,13 @@ class DockerOrchestrator:
             timeout=_INSTALL_WAIT_TIMEOUT,
         ).json()
         return data["code"], data["logs"]
+
+    def workshop_progress(self, server_id: str) -> dict:
+        """Live state of the server's running workshop download:
+        ``{running, attempt, max_attempts, items: {item_id: {bytes, state}}}``."""
+        return self._request(
+            "GET", f"/servers/{server_id}/workshop/progress", timeout=_PROGRESS_TIMEOUT
+        ).json()
 
     def remove_workshop_item(self, server_id: str, install_path: str, item_id: str) -> None:
         self._request(

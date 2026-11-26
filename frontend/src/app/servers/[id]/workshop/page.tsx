@@ -24,7 +24,9 @@ import {
   type LoadOrder,
   type LoadOrderEntry,
   type Template,
+  type ModProgress,
   type WorkshopMod,
+  type WorkshopProgress,
 } from "@/lib/types";
 import { formatCount, timeAgo } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -36,6 +38,7 @@ import { ModDetailsDrawer } from "@/components/workshop/ModDetailsDrawer";
 import { ImportModsModal } from "@/components/workshop/ImportModsModal";
 import { WorkshopBrowse } from "@/components/workshop/WorkshopBrowse";
 import { LoadOrderList } from "@/components/workshop/LoadOrderList";
+import { ModProgressBar, RunProgress } from "@/components/workshop/DownloadProgress";
 import { cn } from "@/lib/utils";
 import { useServerCtx } from "../server-context";
 
@@ -72,6 +75,15 @@ export default function ServerWorkshopPage() {
         d?.some((m) => WORKSHOP_INFLIGHT.includes(m.status)) ? 2500 : 0,
     },
   );
+
+  // Overall + per-mod download progress, polled while anything is in flight.
+  const inflight = (data ?? []).some((m) => WORKSHOP_INFLIGHT.includes(m.status));
+  const { data: progress } = useSWR<WorkshopProgress>(
+    inflight ? ["mods-progress", server.id] : null,
+    () => api.modsProgress(server.id),
+    { refreshInterval: 2500, revalidateOnFocus: false },
+  );
+  const runProgress = inflight && progress?.active ? progress : null;
 
   const { data: templates } = useSWR<Template[]>("templates", () => api.templates());
   const template = templates?.find((t) => t.id === server.template_id);
@@ -442,6 +454,8 @@ export default function ServerWorkshopPage() {
         </div>
       )}
 
+      {runProgress && <RunProgress progress={runProgress} />}
+
       {/* Installed grid */}
       {error ? (
         <ErrorState
@@ -477,6 +491,7 @@ export default function ServerWorkshopPage() {
             <ModCard
               key={m.id}
               mod={m}
+              progress={runProgress?.items[m.id]}
               busy={busyId === m.id}
               onOpen={() => setDetailItemId(m.item_id)}
               onRemove={() => remove(m)}
@@ -514,12 +529,14 @@ export default function ServerWorkshopPage() {
 
 function ModCard({
   mod,
+  progress,
   busy,
   onOpen,
   onRemove,
   onRetry,
 }: {
   mod: WorkshopMod;
+  progress?: ModProgress;
   busy: boolean;
   onOpen: () => void;
   onRemove: () => void;
@@ -568,6 +585,7 @@ function ModCard({
               <CalendarPlus className="size-3" /> added {timeAgo(mod.created_at)}
             </span>
           </div>
+          {progress && mod.status === "downloading" && <ModProgressBar progress={progress} />}
         </div>
         <div className="mt-1 flex items-center justify-between">
           <ModStatusBadge status={mod.status} title={mod.error_message ?? undefined} />

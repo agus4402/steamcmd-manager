@@ -361,6 +361,15 @@ async def workshop_download(
     return InstallResultResponse(code=code, logs=logs)
 
 
+@app.get("/servers/{server_id}/workshop/progress", dependencies=authed)
+async def workshop_progress(server_id: str = Depends(valid_server_id)) -> dict:
+    """Live progress of the server's running workshop download, if any."""
+    try:
+        return await run_in_threadpool(orchestrator.workshop_progress, server_id)
+    except DockerError as exc:
+        raise _wrap(exc) from exc
+
+
 def valid_file_path(path: str) -> str:
     if not FILE_PATH_RE.match(path) or ".." in path.split("/") or "//" in path:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid file path")

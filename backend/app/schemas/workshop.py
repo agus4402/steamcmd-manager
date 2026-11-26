@@ -178,3 +178,32 @@ class LoadOrderUpdate(BaseModel):
 
 class SubmodToggle(BaseModel):
     enabled: bool
+
+
+# -- download progress ---------------------------------------------------------
+
+
+class ModProgressOut(BaseModel):
+    # starting / waiting / downloading / retrying / downloaded / ok / failed
+    state: str
+    bytes: int  # on disk so far (estimate)
+    total: int  # Steam's published size (0 = unknown)
+    fraction: float  # 0..1, capped under 1 until the mod is copied in
+
+
+class WorkshopProgressOut(BaseModel):
+    """The server's current download run: every mod queued since its queue was
+    last empty. ``items`` (keyed by mod id) covers the batch now downloading."""
+
+    active: bool
+    total: int
+    done: int
+    failed: int
+    bytes_total: int
+    bytes_done: int
+    # Its mods are queued behind another server's batch (one at a time).
+    waiting_for_other: bool
+    attempt: int
+    max_attempts: int
+    batch_started_at: datetime | None = None
+    items: dict[str, ModProgressOut]

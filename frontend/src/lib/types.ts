@@ -79,6 +79,30 @@ export interface WorkshopMod {
   created_at: string;
 }
 
+/** Live state of one mod in the batch now downloading. */
+export interface ModProgress {
+  state: "starting" | "waiting" | "downloading" | "retrying" | "downloaded" | "ok" | "failed";
+  bytes: number;
+  total: number;
+  fraction: number;
+}
+
+/** The server's current download run (every mod queued since the queue was empty). */
+export interface WorkshopProgress {
+  active: boolean;
+  total: number;
+  done: number;
+  failed: number;
+  bytes_total: number;
+  bytes_done: number;
+  waiting_for_other: boolean;
+  attempt: number;
+  max_attempts: number;
+  batch_started_at: string | null;
+  /** Keyed by mod id; only the batch now downloading. */
+  items: Record<string, ModProgress>;
+}
+
 export interface WorkshopDependency {
   item_id: string;
   title: string | null;

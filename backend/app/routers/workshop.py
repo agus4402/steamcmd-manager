@@ -26,6 +26,7 @@ from app.schemas.workshop import (
     SyncResult,
     WorkshopModCreate,
     WorkshopModOut,
+    WorkshopProgressOut,
 )
 from app.services import load_order_service, scheduler_service, server_service, workshop_service
 from app.services.docker_orchestrator import DockerError
@@ -90,6 +91,13 @@ def _details_out(d: ModDetails) -> ModDetailsOut:
 async def list_mods(server_id: str, db: AsyncSession = Depends(get_db)) -> list[WorkshopMod]:
     await _server_or_404(db, server_id)
     return await workshop_service.list_mods(db, server_id)
+
+
+@router.get("/{server_id}/mods/progress", response_model=WorkshopProgressOut)
+async def mods_progress(server_id: str, db: AsyncSession = Depends(get_db)) -> dict:
+    """Overall and per-mod progress of the server's current download run."""
+    await _server_or_404(db, server_id)
+    return await workshop_service.get_progress(db, server_id)
 
 
 @router.post("/{server_id}/mods", response_model=WorkshopModOut, status_code=status.HTTP_202_ACCEPTED)

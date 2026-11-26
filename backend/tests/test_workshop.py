@@ -339,3 +339,74 @@ def test_cancel_server_downloads_drops_only_that_server(monkeypatch):
         assert a.done() and c.done() and not b.done()  # waiters of s1 are released
 
     asyncio.run(run())
+
+
+# -- download progress ---------------------------------------------------------
+
+
+def _mod(mid, item, status, size):
+    from app.models.workshop_mod import WorkshopMod
+
+    return WorkshopMod(id=mid, server_id="s", item_id=item, status=status, file_size=size)
+
+
+def test_build_progress_overall_and_per_mod():
+    mods = [
+        _mod("a", "1", "installed", 100),
+        _mod("b", "2", "error", 50),
+        _mod("c", "3", "downloading", 200),  # half on disk
+        _mod("d", "4", "downloading", 300),  # already copied in (batch still running)
+        _mod("e", "5", "downloading", 0),  # unknown size, not in the agent's view yet
+        _mod("f", "6", "queued", 400),
+    ]
+    live = {
+        "attempt": 2,
+        "max_attempts": 6,
+        "items": {"3": {"bytes": 100, "state": "downloading"}, "4": {"bytes": 300, "state": "ok"}},
+    }
+    p = ws.build_progress(mods, ["c", "d", "e"], live)
+    assert (p["total"], p["done"], p["failed"]) == (6, 2, 1)
+    assert p["bytes_total"] == 1050
+    assert p["bytes_done"] == 100 + 50 + 100 + 300
+    assert (p["attempt"], p["max_attempts"]) == (2, 6)
+    assert set(p["items"]) == {"c", "d", "e"}  # only the running batch
+    assert p["items"]["c"] == {"state": "downloading", "bytes": 100, "total": 200, "fraction": 0.5}
+    assert p["items"]["d"]["fraction"] == 1.0
+    assert p["items"]["e"] == {"state": "starting", "bytes": 0, "total": 0, "fraction": 0.0}
+
+
+def test_build_progress_caps_unfinished_mod_under_full():
+    # du can exceed Steam's size (an update next to the old copy): never show 100%.
+    p = ws.build_progress([_mod("c", "3", "downloading", 100)], ["c"],
+                          {"items": {"3": {"bytes": 250, "state": "downloading"}}})
+    assert p["items"]["c"]["fraction"] == 0.99
+
+
+def test_build_progress_idle():
+    p = ws.build_progress([], [], {})
+    assert p["active"] is False and p["total"] == 0 and p["items"] == {}
+
+
+def test_run_tracking_spans_batches_and_ends_when_drained(monkeypatch):
+    seen: list[tuple[set[str], list[str]]] = []
+
+    async def fake_batch(server_id, mod_ids):
+        seen.append((set(ws._runs.get(server_id, set())), ws._active[server_id][0]))
+        await asyncio.sleep(0)
+
+    monkeypatch.setattr(ws, "_download_batch", fake_batch)
+    monkeypatch.setattr(ws, "_BATCH_SIZE", 2)
+    monkeypatch.setattr(ws, "_pending", [])
+    monkeypatch.setattr(ws, "_worker", None)
+    monkeypatch.setattr(ws, "_runs", {})
+    monkeypatch.setattr(ws, "_active", {})
+
+    async def run():
+        await asyncio.wait_for(
+            asyncio.gather(*(ws._download_job("s1", f"m{i}") for i in range(3))), timeout=2
+        )
+
+    asyncio.run(run())
+    # The run holds all 3 mods through both batches, then is dropped.
+    assert seen == [({"m0", "m1", "m2"}, ["m0", "m1"]), ({"m0", "m1", "m2"}, ["m2"])]
+    assert ws._runs == {} and ws._active == {}

@@ -48,6 +48,76 @@ MAX_FILE_BYTES = 2 * 1024 * 1024
 SNAPSHOT_ID_RE = re.compile(r"^snap-\d{8}-\d{6}-[0-9a-f]{4}$")
 
 
+# -- workshop download progress ----------------------------------------------
+
+# Run inside a workshop download container (its env names the app + items):
+# prints "<item_id> <KiB on disk>" per item, summing steamcmd's partial download
+# and finished content dirs across the Steam roots it may use (deduplicated,
+# since ~/.steam/steam can be a link to ~/Steam).
+_WS_DU_SCRIPT = r"""
+roots=""
+for b in /home/steam/Steam "$STEAMCMD_DIR" /home/steam/.steam/steam; do
+  r=$(readlink -f "$b" 2>/dev/null) || continue
+  [ -d "$r" ] || continue
+  case " $roots " in *" $r "*) ;; *) roots="$roots $r" ;; esac
+done
+for id in $(echo "${WORKSHOP_ITEM_IDS:-$WORKSHOP_ITEM_ID}" | tr ';' ' '); do
+  t=0
+  for r in $roots; do
+    for p in "$r/steamapps/workshop/downloads/$WORKSHOP_APP_ID/$id" \
+             "$r/steamapps/workshop/content/$WORKSHOP_APP_ID/$id"; do
+      if [ -d "$p" ]; then
+        k=$(du -sk "$p" 2>/dev/null | cut -f1)
+        t=$((t + ${k:-0}))
+      fi
+    done
+  done
+  echo "$id $t"
+done
+"""
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+_WS_ATTEMPT_RE = re.compile(r"steamcmd attempt (\d+)/(\d+) for")
+_WS_ITEMS_RE = re.compile(r"downloading \d+ workshop item\(s\) for app \d+: ([\d ]+)")
+_WS_RESULT_RE = re.compile(r"^\[workshop-result\] (\d+) (ok|failed)", re.MULTILINE)
+_WS_DU_LINE_RE = re.compile(r"^(\d+) (\d+)$", re.MULTILINE)
+
+
+def parse_workshop_progress(logs: str, du: str) -> dict:
+    """Turn a running download's logs + du output into
+    ``{running, attempt, max_attempts, items: {id: {bytes, state}}}``.
+
+    state: ok / failed (final result), downloaded (steamcmd done, being copied),
+    downloading (steamcmd is on it now), retrying (failed this attempt, will
+    resume), waiting (not reached yet in this attempt)."""
+    logs = _ANSI_RE.sub("", logs or "")
+    attempt, max_attempts, attempt_at = 0, 0, 0
+    for m in _WS_ATTEMPT_RE.finditer(logs):
+        attempt, max_attempts, attempt_at = int(m.group(1)), int(m.group(2)), m.start()
+    current = logs[attempt_at:]  # this attempt's steamcmd output
+
+    sizes = {m.group(1): int(m.group(2)) * 1024 for m in _WS_DU_LINE_RE.finditer(du or "")}
+    ids = list(sizes)
+    if (m := _WS_ITEMS_RE.search(logs)) is not None:
+        ids += [i for i in m.group(1).split() if i not in sizes]
+    results = {m.group(1): m.group(2) for m in _WS_RESULT_RE.finditer(logs)}
+
+    items: dict[str, dict] = {}
+    for item in ids:
+        if item in results:
+            state = results[item]
+        elif f"Success. Downloaded item {item}" in current:
+            state = "downloaded"
+        elif f"ERROR! Download item {item} failed" in current:
+            state = "retrying"
+        elif f"Downloading item {item}" in current:
+            state = "downloading"
+        else:
+            state = "waiting"
+        items[item] = {"bytes": sizes.get(item, 0), "state": state}
+    return {"running": True, "attempt": attempt, "max_attempts": max_attempts, "items": items}
+
+
 def _new_snapshot_id() -> str:
     ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     return f"snap-{ts}-{secrets.token_hex(2)}"
@@ -705,6 +775,32 @@ class DockerOrchestrator:
             except APIError:
                 pass
         return code, logs
+
+    def workshop_progress(self, server_id: str) -> dict:
+        """Live state of the server's running workshop download (if any): the
+        steamcmd attempt, and per item the bytes on disk so far plus a state
+        read from the logs. steamcmd prints no progress for workshop items, so
+        the bytes come from ``du`` on its download/content dirs."""
+        try:
+            listed = self.client.containers.list(
+                filters={"label": f"{LABEL_SERVER_ID}={server_id}", "status": "running"}
+            )
+        except APIError as exc:
+            raise DockerError(f"could not list containers: {exc}") from exc
+        running = [c for c in listed if c.name.startswith(f"gs-ws-{server_id}-")]
+        if not running:
+            return {"running": False, "attempt": 0, "max_attempts": 0, "items": {}}
+        container = running[0]
+        try:
+            rc, out = container.exec_run(["sh", "-c", _WS_DU_SCRIPT])
+            du = out.decode("utf-8", "replace") if rc == 0 else ""
+        except APIError:
+            du = ""
+        try:
+            logs = container.logs(stdout=True, stderr=True).decode("utf-8", "replace")
+        except APIError:
+            logs = ""
+        return parse_workshop_progress(logs, du)
 
     def remove_workshop_item(self, server_id: str, install_path: str, item_id: str) -> None:
         target = f"/data/{install_path}/{item_id}"

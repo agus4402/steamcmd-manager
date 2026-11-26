@@ -14,6 +14,7 @@ import type {
   SteamCredentials,
   Template,
   WorkshopMod,
+  WorkshopProgress,
   ImportPreview,
   ImportResult,
   ModDetails,
@@ -200,6 +201,8 @@ export const api = {
     request<null>(`/api/servers/${id}/schedule/${actionId}`, { method: "DELETE" }),
 
   mods: (id: string) => request<WorkshopMod[]>(`/api/servers/${id}/mods`),
+  modsProgress: (id: string) =>
+    request<WorkshopProgress>(`/api/servers/${id}/mods/progress`),
   addMod: (id: string, item: string, name?: string) =>
     request<WorkshopMod>(`/api/servers/${id}/mods`, {
       method: "POST",

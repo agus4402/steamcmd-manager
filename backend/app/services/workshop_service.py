@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import time
 from collections.abc import Coroutine
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -54,6 +55,17 @@ _DEP_DEPTH_CAP = 5
 _pending: list[tuple[str, str, asyncio.Future[None]]] = []  # (server_id, mod_id, done)
 _worker: asyncio.Task | None = None
 _RESULT_RE = re.compile(r"^\[workshop-result\] (\d+) (ok|failed)(?: (.*))?$", re.MULTILINE)
+
+# Progress tracking (in memory, like the queue). A server's "run" is every mod
+# queued since its queue was last empty; it ends when none of them is pending.
+# The overall bar ("37 / 128 mods") is computed over the run, the per-mod bars
+# from the agent's live view of the running batch.
+_runs: dict[str, set[str]] = {}  # server_id -> mod ids of its current run
+_active: dict[str, tuple[list[str], datetime]] = {}  # server_id -> (batch mod ids, started)
+_live_cache: dict[str, tuple[float, dict]] = {}  # server_id -> (monotonic ts, agent view)
+_LIVE_TTL = 2.0
+_PENDING_STATUSES = ("queued", "downloading")
+_FAILED_STATUSES = ("error", "missing_dependency")
 
 
 # Strong refs to fire-and-forget tasks: the loop only keeps weak ones, so an
@@ -457,6 +469,8 @@ def cancel_server_downloads(server_id: str) -> int:
         _pending.remove(entry)
         if not entry[2].done():
             entry[2].set_result(None)
+    _runs.pop(server_id, None)
+    _live_cache.pop(server_id, None)
     return len(dropped)
 
 
@@ -465,6 +479,7 @@ async def _download_job(server_id: str, mod_id: str) -> None:
     "queued" until its batch starts, then "downloading"."""
     done: asyncio.Future[None] = asyncio.get_running_loop().create_future()
     _pending.append((server_id, mod_id, done))
+    _runs.setdefault(server_id, set()).add(mod_id)
     global _worker
     if _worker is None or _worker.done():
         _worker = _spawn(_download_worker())
@@ -492,11 +507,16 @@ def _take_batch() -> tuple[str, list[str], list[asyncio.Future[None]]]:
 async def _download_worker() -> None:
     while _pending:
         server_id, mod_ids, waiters = _take_batch()
+        _active[server_id] = (mod_ids, datetime.now(timezone.utc))
         try:
             await _download_batch(server_id, mod_ids)
         except Exception:  # noqa: BLE001 — never let the queue die
             logger.exception("workshop batch crashed for %s", server_id)
         finally:
+            _active.pop(server_id, None)
+            _live_cache.pop(server_id, None)
+            if not any(e[0] == server_id for e in _pending):
+                _runs.pop(server_id, None)  # its run is over
             for done in waiters:
                 if not done.done():
                     done.set_result(None)
@@ -508,6 +528,103 @@ def parse_download_results(logs: str) -> dict[str, tuple[bool, str | None]]:
         m.group(1): (m.group(2) == "ok", (m.group(3) or "").strip() or None)
         for m in _RESULT_RE.finditer(logs or "")
     }
+
+
+async def _live_progress(server_id: str) -> dict:
+    """The agent's view of the running batch, cached briefly so several open
+    tabs don't each exec into the container. Best-effort: {} on any error."""
+    now = time.monotonic()
+    cached = _live_cache.get(server_id)
+    if cached is not None and now - cached[0] < _LIVE_TTL:
+        return cached[1]
+    try:
+        live = await run_in_threadpool(orchestrator.workshop_progress, server_id)
+    except Exception as exc:  # noqa: BLE001 — progress is cosmetic; never fail the poll
+        logger.debug("workshop progress unavailable for %s: %s", server_id, exc)
+        live = {}
+    _live_cache[server_id] = (now, live)
+    return live
+
+
+def build_progress(
+    mods: list[WorkshopMod],
+    active_ids: list[str],
+    live: dict,
+    *,
+    waiting_for_other: bool = False,
+) -> dict:
+    """Overall + per-mod progress of a run. ``mods`` are the run's rows,
+    ``active_ids`` the mod ids of the batch now downloading and ``live`` the
+    agent's view of it. A mod's bar stays under 100% until it is copied in
+    (bytes on disk are an estimate against Steam's published size)."""
+    live_items: dict = live.get("items") or {}
+    active = set(active_ids)
+    items: dict[str, dict] = {}
+    done = failed = 0
+    bytes_total = bytes_done = 0
+    for m in mods:
+        size = m.file_size or 0
+        bytes_total += size
+        info = live_items.get(m.item_id) if m.id in active else None
+        if m.status not in _PENDING_STATUSES:
+            bytes_done += size
+            if m.status in _FAILED_STATUSES:
+                failed += 1
+            else:
+                done += 1
+            continue
+        if m.id not in active:
+            continue  # still queued
+        state = (info or {}).get("state") or "starting"
+        on_disk = int((info or {}).get("bytes") or 0)
+        if state == "ok":
+            done += 1
+            bytes_done += size
+            fraction = 1.0
+        elif state == "failed":
+            failed += 1
+            bytes_done += size
+            fraction = 1.0
+        else:
+            fraction = min(on_disk / size, 0.99) if size else 0.0
+            bytes_done += int(size * fraction)
+        items[m.id] = {"state": state, "bytes": on_disk, "total": size, "fraction": fraction}
+    total = len(mods)
+    return {
+        "active": total > 0,
+        "total": total,
+        "done": done,
+        "failed": failed,
+        "bytes_total": bytes_total,
+        "bytes_done": bytes_done,
+        "waiting_for_other": waiting_for_other,
+        "attempt": int(live.get("attempt") or 0),
+        "max_attempts": int(live.get("max_attempts") or 0),
+        "items": items,
+    }
+
+
+async def get_progress(session: AsyncSession, server_id: str) -> dict:
+    """Download progress of the server's current run (inactive when idle)."""
+    run = _runs.get(server_id)
+    if not run:
+        return build_progress([], [], {})
+    mods = list(
+        (
+            await session.execute(
+                select(WorkshopMod).where(
+                    WorkshopMod.server_id == server_id, WorkshopMod.id.in_(list(run))
+                )
+            )
+        ).scalars().all()
+    )
+    active_ids, started = _active.get(server_id, ([], None))
+    live = await _live_progress(server_id) if active_ids else {}
+    progress = build_progress(
+        mods, active_ids, live, waiting_for_other=bool(_active) and server_id not in _active
+    )
+    progress["batch_started_at"] = started
+    return progress
 
 
 def _tail(logs: str, lines: int = 6) -> str:
