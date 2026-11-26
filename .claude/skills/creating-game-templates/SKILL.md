@@ -133,6 +133,13 @@ How it works:
 - Adding a mod runs SteamCMD `+workshop_download_item <app_id> <item_id>` in a one-shot
   container (the gameserver image's entrypoint handles `WORKSHOP_DOWNLOAD`), then copies
   the item into the data volume at `INSTALL_DIR/<install_path>/<item_id>`.
+- Exception: when `install_path` is Steam's own layout,
+  `steamapps/workshop/content/<workshop app_id>`, steamcmd downloads with
+  `force_install_dir` **straight into the data volume** instead. Then it also writes
+  `steamapps/workshop/appworkshop_<app_id>.acf`, the record that tells the game's own
+  Steam client the items are installed. Without that record, a game that downloads
+  `WorkshopItems` itself (Project Zomboid) downloads every copied mod again at its
+  first start. Use this layout for any game that fetches workshop items on its own.
 - The panel only **downloads** items into place. **Wiring them into the game is
   game-specific** and not automatic — document in a comment how the server loads them
   (e.g. Project Zomboid's `.ini` `WorkshopItems=`/`Mods=`, a `-mod` launch flag, etc.).

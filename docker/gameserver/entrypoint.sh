@@ -103,8 +103,8 @@ install_workshop_item() {
     # steamcmd writes items to <steam root>/steamapps/workshop/content/<app>/<item>.
     # The root varies by build, so probe the known locations.
     local rel="steamapps/workshop/content/${WORKSHOP_APP_ID}/${item}"
-    local src=""
-    for base in "/home/steam/Steam" "${STEAMCMD_DIR}" "/home/steam/.steam/steam"; do
+    local src="" base
+    for base in "${STEAM_ROOTS[@]}"; do
         if [ -d "${base}/${rel}" ]; then src="${base}/${rel}"; break; fi
     done
     if [ -z "${src}" ]; then
@@ -117,6 +117,12 @@ install_workshop_item() {
         return 1
     fi
     local dest="${INSTALL_DIR}/${WORKSHOP_INSTALL_PATH:-steamapps/workshop}/${item}"
+    # Downloaded straight into the data volume (see workshop_native): already
+    # in place.
+    if [ "${src}" = "${dest}" ]; then
+        ws_result "${item}" ok
+        return 0
+    fi
     mkdir -p "$(dirname "${dest}")"
     rm -rf "${dest}"
     if ! cp -a "${src}" "${dest}"; then
@@ -127,6 +133,36 @@ install_workshop_item() {
 }
 
 STEAM_ROOTS=("/home/steam/Steam" "${STEAMCMD_DIR}" "/home/steam/.steam/steam")
+
+# workshop_native — true when the template's install path IS Steam's own layout
+# (steamapps/workshop/content/<app>, e.g. Project Zomboid). Then the game's own
+# Steam client manages the items too, and it trusts only its library manifest
+# (<data>/steamapps/workshop/appworkshop_<app>.acf): a copied folder without an
+# entry there reads as "not installed" and is downloaded all over again at the
+# first start. So such items are downloaded with force_install_dir straight into
+# the data volume, where steamcmd writes the files and that manifest together.
+workshop_native() {
+    [ "${WORKSHOP_INSTALL_PATH:-}" = "steamapps/workshop/content/${WORKSHOP_APP_ID}" ]
+}
+
+# forget_workshop_record ITEM — remove ITEM's entries from the data volume's
+# workshop manifest. Keys sit alone on their line ("<id>") followed by a { }
+# block; every other item's entries are kept as they are.
+forget_workshop_record() {
+    local acf="${INSTALL_DIR}/steamapps/workshop/appworkshop_${WORKSHOP_APP_ID}.acf"
+    [ -f "${acf}" ] || return 0
+    ID="$1" awk '
+        BEGIN { key = "\"" ENVIRON["ID"] "\""; skip = 0; depth = 0 }
+        { t = $0; gsub(/^[ \t]+|[ \t\r]+$/, "", t) }
+        skip {
+            if (t == "{") depth++
+            else if (t == "}" && --depth == 0) skip = 0
+            next
+        }
+        t == key { skip = 1; depth = 0; next }
+        { print }
+    ' "${acf}" >"${acf}.tmp" && mv "${acf}.tmp" "${acf}"
+}
 
 # reset_workshop_item ITEM — drop steamcmd's cached copy and partial download of
 # one item so the next attempt starts clean. A download that keeps ending in
@@ -141,14 +177,18 @@ reset_workshop_item() {
             "${base}/steamapps/workshop/temp/${WORKSHOP_APP_ID}/${item}"
         rm -f "${dl}/state_${WORKSHOP_APP_ID}_${item}"*
     done
+    if workshop_native; then forget_workshop_record "${item}"; fi
 }
 
 # reset_workshop_manifest — forget steamcmd's record of downloaded items for the
 # app (appworkshop_<app>.acf). A stale entry also causes "failed (Failure)".
-# Only the shared cache's bookkeeping: items already copied into servers stay.
+# Only the shared cache's bookkeeping: the data volume's manifest also records
+# items installed earlier (dropping it would make the game re-download them all);
+# reset_workshop_item already removes the failing item's entries from it.
 reset_workshop_manifest() {
     local base
     for base in "${STEAM_ROOTS[@]}"; do
+        [ "${base}" = "${INSTALL_DIR}" ] && continue
         rm -f "${base}/steamapps/workshop/appworkshop_${WORKSHOP_APP_ID}.acf"
     done
 }
@@ -178,6 +218,22 @@ run_workshop_download() {
         log "logging in anonymously"
     fi
 
+    local dir_args=()
+    if workshop_native; then
+        dir_args=("+force_install_dir" "${INSTALL_DIR}")
+        STEAM_ROOTS=("${INSTALL_DIR}" "${STEAM_ROOTS[@]}")
+        log "downloading straight into ${INSTALL_DIR} (the game's own workshop library)"
+        # An entry for an item whose folder is gone (mod removed in the panel)
+        # would make steamcmd report it current without fetching anything.
+        local dir
+        for id in "${pending[@]}"; do
+            dir="${INSTALL_DIR}/${WORKSHOP_INSTALL_PATH}/${id}"
+            if [ ! -d "${dir}" ] || [ -z "$(find "${dir}" -type f -print -quit)" ]; then
+                forget_workshop_record "${id}"
+            fi
+        done
+    fi
+
     # All items go through ONE steamcmd session (one login) per attempt: a login
     # per item gets throttled by Steam on big collections.
     # steamcmd exits 0 even when a workshop download fails: big items often stop
@@ -199,7 +255,8 @@ run_workshop_download() {
             cmd_args+=("+workshop_download_item" "${WORKSHOP_APP_ID}" "${id}")
         done
         set +e
-        "${STEAMCMD_DIR}/steamcmd.sh" "${login_args[@]}" "${cmd_args[@]}" +quit 2>&1 \
+        # force_install_dir MUST come before +login (steamcmd requirement).
+        "${STEAMCMD_DIR}/steamcmd.sh" "${dir_args[@]}" "${login_args[@]}" "${cmd_args[@]}" +quit 2>&1 \
             | tee /dev/stderr | sed 's/\x1b\[[0-9;]*[A-Za-z]//g' >"${out}"
         set -e
         local still=()

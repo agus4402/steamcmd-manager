@@ -53,10 +53,11 @@ SNAPSHOT_ID_RE = re.compile(r"^snap-\d{8}-\d{6}-[0-9a-f]{4}$")
 # Run inside a workshop download container (its env names the app + items):
 # prints "<item_id> <KiB on disk>" per item, summing steamcmd's partial download
 # and finished content dirs across the Steam roots it may use (deduplicated,
-# since ~/.steam/steam can be a link to ~/Steam).
+# since ~/.steam/steam can be a link to ~/Steam). The data volume is one of them
+# when the template's install path is Steam's own layout (force_install_dir).
 _WS_DU_SCRIPT = r"""
 roots=""
-for b in /home/steam/Steam "$STEAMCMD_DIR" /home/steam/.steam/steam; do
+for b in /home/steam/Steam "$STEAMCMD_DIR" /home/steam/.steam/steam "${INSTALL_DIR:-/data}"; do
   r=$(readlink -f "$b" 2>/dev/null) || continue
   [ -d "$r" ] || continue
   case " $roots " in *" $r "*) ;; *) roots="$roots $r" ;; esac
