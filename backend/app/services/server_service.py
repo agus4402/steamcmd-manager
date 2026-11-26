@@ -630,7 +630,11 @@ async def restart_server(
 
 
 async def delete_server(session: AsyncSession, server: Server) -> None:
-    # Remove container + install container + data volume; no orphans left behind.
+    from app.services import workshop_service  # late import avoids a cycle
+
+    # Queued workshop downloads would start new containers for a gone server.
+    workshop_service.cancel_server_downloads(server.id)
+    # Remove container + install/workshop containers + data volume; no orphans.
     await run_in_threadpool(orchestrator.remove, server.id, True)
     # Deleting the row cascades to port_allocations, freeing the host ports.
     await session.delete(server)

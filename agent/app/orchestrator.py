@@ -335,6 +335,15 @@ class DockerOrchestrator:
         install = self._get(self.install_name(server_id))
         if install is not None:
             install.remove(force=True)
+        # One-shot workshop downloads (gs-ws-<id>-…) too: a running one keeps the
+        # data volume in use, so the volume removal below would fail.
+        for other in self.client.containers.list(
+            all=True, filters={"label": f"{LABEL_SERVER_ID}={server_id}"}
+        ):
+            try:
+                other.remove(force=True)
+            except NotFound:
+                pass
         if remove_data:
             self.remove_volume(self.data_volume(server_id))
             self._purge_backups(server_id)

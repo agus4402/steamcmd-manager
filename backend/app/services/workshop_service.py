@@ -449,6 +449,17 @@ async def resume_queue_on_boot() -> int:
     return len(rows)
 
 
+def cancel_server_downloads(server_id: str) -> int:
+    """Drop a server's not-yet-started downloads from the queue (e.g. when the
+    server is deleted). A batch already running ends when its container goes."""
+    dropped = [e for e in _pending if e[0] == server_id]
+    for entry in dropped:
+        _pending.remove(entry)
+        if not entry[2].done():
+            entry[2].set_result(None)
+    return len(dropped)
+
+
 async def _download_job(server_id: str, mod_id: str) -> None:
     """Queue a mod for download and wait until its batch is done. The row shows
     "queued" until its batch starts, then "downloading"."""

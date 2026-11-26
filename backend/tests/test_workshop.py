@@ -327,3 +327,15 @@ def test_queue_survives_a_crashing_batch(monkeypatch):
 
     asyncio.run(run())
     assert calls == [["a"], ["b"]]
+
+
+def test_cancel_server_downloads_drops_only_that_server(monkeypatch):
+    async def run():
+        loop = asyncio.get_running_loop()
+        a, b, c = loop.create_future(), loop.create_future(), loop.create_future()
+        monkeypatch.setattr(ws, "_pending", [("s1", "m1", a), ("s2", "x", b), ("s1", "m2", c)])
+        assert ws.cancel_server_downloads("s1") == 2
+        assert [e[1] for e in ws._pending] == ["x"]
+        assert a.done() and c.done() and not b.done()  # waiters of s1 are released
+
+    asyncio.run(run())
