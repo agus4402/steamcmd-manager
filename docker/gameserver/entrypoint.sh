@@ -126,6 +126,33 @@ install_workshop_item() {
     ws_result "${item}" ok
 }
 
+STEAM_ROOTS=("/home/steam/Steam" "${STEAMCMD_DIR}" "/home/steam/.steam/steam")
+
+# reset_workshop_item ITEM — drop steamcmd's cached copy and partial download of
+# one item so the next attempt starts clean. A download that keeps ending in
+# "failed (Failure)" (not Timeout) usually has a corrupt partial state that
+# resuming can never get past.
+reset_workshop_item() {
+    local item="$1" base dl
+    for base in "${STEAM_ROOTS[@]}"; do
+        dl="${base}/steamapps/workshop/downloads"
+        rm -rf "${base}/steamapps/workshop/content/${WORKSHOP_APP_ID}/${item}" \
+            "${dl}/${item}" "${dl}/${WORKSHOP_APP_ID}/${item}" \
+            "${base}/steamapps/workshop/temp/${WORKSHOP_APP_ID}/${item}"
+        rm -f "${dl}/state_${WORKSHOP_APP_ID}_${item}"*
+    done
+}
+
+# reset_workshop_manifest — forget steamcmd's record of downloaded items for the
+# app (appworkshop_<app>.acf). A stale entry also causes "failed (Failure)".
+# Only the shared cache's bookkeeping: items already copied into servers stay.
+reset_workshop_manifest() {
+    local base
+    for base in "${STEAM_ROOTS[@]}"; do
+        rm -f "${base}/steamapps/workshop/appworkshop_${WORKSHOP_APP_ID}.acf"
+    done
+}
+
 run_workshop_download() {
     # One-shot Steam Workshop download of one or more items. Driven by:
     #   WORKSHOP_APP_ID       Steam app whose workshop content is fetched
@@ -162,7 +189,9 @@ run_workshop_download() {
     local attempt=1
     local out="/tmp/workshop-download.log"
     local failed=0
+    local manifest_reset=0
     declare -A reason=()
+    declare -A hard_fails=()
     while [ "${#pending[@]}" -gt 0 ] && [ "${attempt}" -le "${max_attempts}" ]; do
         log "steamcmd attempt ${attempt}/${max_attempts} for ${#pending[@]} item(s)"
         local cmd_args=()
@@ -170,7 +199,8 @@ run_workshop_download() {
             cmd_args+=("+workshop_download_item" "${WORKSHOP_APP_ID}" "${id}")
         done
         set +e
-        "${STEAMCMD_DIR}/steamcmd.sh" "${login_args[@]}" "${cmd_args[@]}" +quit 2>&1 | tee "${out}"
+        "${STEAMCMD_DIR}/steamcmd.sh" "${login_args[@]}" "${cmd_args[@]}" +quit 2>&1 \
+            | tee /dev/stderr | sed 's/\x1b\[[0-9;]*[A-Za-z]//g' >"${out}"
         set -e
         local still=()
         for id in "${pending[@]}"; do
@@ -180,11 +210,22 @@ run_workshop_download() {
                 still+=("${id}")
                 # Keep the most specific reason seen across attempts.
                 local err
-                err="$(grep -o "ERROR! Download item ${id} failed.*" "${out}" | tail -n1 || true)"
+                err="$(grep -o "ERROR! Download item ${id} failed ([^)]*)" "${out}" | tail -n1 || true)"
                 if [ -n "${err}" ]; then
                     reason["${id}"]="${err}"
                 elif [ -z "${reason[${id}]:-}" ]; then
-                    reason["${id}"]="$(grep -o 'ERROR!.*\|FAILED.*' "${out}" | tail -n1 || true)"
+                    reason["${id}"]="$(grep -o 'ERROR![^.]*\|FAILED.*' "${out}" | tail -n1 || true)"
+                fi
+                # A Timeout resumes fine; anything else restarts the item clean.
+                if [ -n "${err}" ] && [[ "${err}" != *"(Timeout)"* ]]; then
+                    hard_fails["${id}"]=$(( ${hard_fails[${id}]:-0} + 1 ))
+                    log "item ${id}: ${err#ERROR! } — clearing its cached download"
+                    reset_workshop_item "${id}"
+                    if [ "${hard_fails[${id}]}" -ge 2 ] && [ "${manifest_reset}" -eq 0 ]; then
+                        log "clearing steamcmd's workshop manifest for app ${WORKSHOP_APP_ID}"
+                        reset_workshop_manifest
+                        manifest_reset=1
+                    fi
                 fi
             fi
         done

@@ -120,6 +120,29 @@ class DockerOrchestrator:
     def ping(self) -> dict[str, object]:
         return self.client.version()
 
+    def pull_gameserver_image(self) -> bool:
+        """Fetch the newest game-server image from its registry (best-effort).
+
+        The agent launches every game-server/install/workshop container from
+        it, but deployments only pull the images of their compose services, so
+        without this the first copy ever pulled would be used forever. Only
+        registry images (``ghcr.io/...``) are pulled; local dev builds are not.
+        """
+        image = settings.gameserver_image
+        first = image.split("/", 1)[0]
+        if "/" not in image or not ("." in first or ":" in first):
+            return False
+        repo, tag = image, "latest"
+        if ":" in image.rsplit("/", 1)[-1]:
+            repo, tag = image.rsplit(":", 1)
+        try:
+            self.client.images.pull(repo, tag=tag)
+        except docker.errors.DockerException as exc:
+            logger.warning("could not pull %s (keeping the local copy): %s", image, exc)
+            return False
+        logger.info("pulled %s", image)
+        return True
+
     # -- naming ---------------------------------------------------------------
 
     @staticmethod

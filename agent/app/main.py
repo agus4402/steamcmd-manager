@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import re
 import secrets
+import threading
+from contextlib import asynccontextmanager
 from dataclasses import asdict
 from typing import Literal
 
@@ -43,7 +45,17 @@ from app.schemas import (
 
 settings = get_settings()
 verify_secrets(settings)
-app = FastAPI(title="SteamCMD Manager Agent", version="0.1.0")
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    # Keep the game-server image current (deployments don't pull it). In a
+    # thread: a slow registry must never delay the agent's startup.
+    threading.Thread(target=orchestrator.pull_gameserver_image, daemon=True).start()
+    yield
+
+
+app = FastAPI(title="SteamCMD Manager Agent", version="0.1.0", lifespan=lifespan)
 
 bearer = HTTPBearer(auto_error=True)
 

@@ -535,8 +535,9 @@ async def _download_batch(server_id: str, mod_ids: list[str]) -> None:
         logger.exception("workshop download crashed for %s %s", server_id, item_ids)
 
     results = parse_download_results(logs)
-    if not results and code == 0 and len(item_ids) == 1:
-        results = {item_ids[0]: (True, None)}  # gameserver image without result lines
+    stale_image = not results and "[entrypoint]" in logs
+    if stale_image and code == 0 and len(item_ids) == 1:
+        results = {item_ids[0]: (True, None)}  # old image, but a single item: it's done
     failed: list[str] = []
     for mod_id, item_id in targets.items():
         ok, reason = results.get(item_id, (False, None))
@@ -544,6 +545,11 @@ async def _download_batch(server_id: str, mod_ids: list[str]) -> None:
             await _finish(mod_id, 0, "")
         else:
             failed.append(item_id)
+            if stale_image and not reason:
+                reason = (
+                    "the game-server image is outdated (no per-item results); restart the "
+                    "agent or pull the -gameserver image, then retry.\n" + _tail(logs, 3)
+                )
             await _finish(mod_id, 1, reason or _tail(logs) or "download failed")
     logger.info(
         "workshop batch on %s: %d ok, %d failed", server_id, len(targets) - len(failed), len(failed)
